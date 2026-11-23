@@ -1,6 +1,5 @@
 from django.utils import timezone
 from .models import AuditLog
-from .audit_chain import verify_audit_chain, compute_entry_hash
 
 
 def client_ip(request):

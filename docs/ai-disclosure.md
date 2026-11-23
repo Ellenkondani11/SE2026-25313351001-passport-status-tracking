@@ -31,5 +31,10 @@
 - Added `tests/test_signature_challenge.py` (13 tests); full suite now 37 passing.
 - Quality checks: `makemigrations --check --dry-run` reports no changes; lizard reports no new function with CCN > 10 or length > 40; bandit reports 0 High / 0 Medium / 6 Low.
 
-## 5. Human Oversight
+## 6. v0.95 Update (2026-11-23)
+- Added GitHub Actions CI, design/quality documentation, flake8 cleanup, and a real 500-user load test.
+- Load test measured p95 18091.81 ms (lookup) and 19271.42 ms (status); gate failed.
+- Final suite: 62 tests passing; verify_slices PASS; lizard 0 warnings; bandit 6 Low.
+
+## 7. Human Oversight
 All generated documentation was reviewed for consistency with the as-built baseline and the Signature Challenge gap analysis before being committed to the working tree. Final approval rests with the student (Ellen Kondani, 25313351001).

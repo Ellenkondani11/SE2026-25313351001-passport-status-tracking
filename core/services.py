@@ -1,14 +1,10 @@
-import json
 import logging
-import os
 from dataclasses import dataclass
 from django.conf import settings
 from django.core.mail import send_mail
-from django.utils import timezone
 import requests
 from . import channels
 from .models import AuditLog, Notification, SmsTemplate, StageChange
-from .utils import audit, client_ip, mask_phone
 
 logger = logging.getLogger("pastns.notifications")
 

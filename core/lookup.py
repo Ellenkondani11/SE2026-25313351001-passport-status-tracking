@@ -3,11 +3,9 @@ from datetime import date, timedelta
 
 from django.shortcuts import redirect, render
 from django.utils import timezone
-from django.utils.translation import get_language
 
 from . import services
-from .forms import RegisterApplicationForm
-from .models import Application, AuditLog, LookupAttempt, LookupOtp, hash_sensitive
+from .models import Application, LookupAttempt, LookupOtp, hash_sensitive
 from .utils import audit, client_ip, normalize_phone
 
 LOOKUP_LIMIT = 5
@@ -133,7 +131,6 @@ def public_home(request):
             request.session["verified_status_at"] = timezone.now().isoformat()
             return redirect(f"/status/?code={application.tracking_code}")
         error = "We could not match those details. Check what you entered or contact Mangochi office."
-    lang = get_language() or "en"
     return render(request, "core/public_home.html", {"error": error, "message": message})
 
 

@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Any, Callable, List
+from typing import Any, List
 from datetime import timedelta
 from django.utils import timezone
 
-from .models import Application, Stage
+from .models import Application
 
 
 @dataclass
@@ -134,7 +134,7 @@ class SmsChannelObserver(StageObserver):
         change = getattr(event, "change", None)
         key = f"stagechange:{change.pk}:sms" if change is not None else None
         notify_stage(event.application, event.to_stage, actor=getattr(event, "actor", None),
-                    ip=getattr(event, "ip", None), idempotency_key=key)
+                     ip=getattr(event, "ip", None), idempotency_key=key)
 
 
 class UssdSyncObserver(StageObserver):
@@ -187,7 +187,6 @@ class BaseNotificationDispatcher:
 
     def write_audit(self, notification, result, actor=None, ip=None):
         from .models import AuditLog
-        destination = notification.to
         AuditLog.objects.create(
             user=actor, action="notification_failed" if result.status == "failed" else "notification_dispatched",
             object_type="Notification", object_id=str(notification.pk),

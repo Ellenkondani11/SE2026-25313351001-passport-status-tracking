@@ -1,16 +1,13 @@
 import csv
-import hashlib
 from datetime import timedelta
 from functools import wraps
-from io import StringIO
-from urllib.parse import urlencode
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count, Q
-from django.http import HttpResponse, HttpResponseForbidden
+from django.db.models import Q
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone, translation
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -18,11 +15,10 @@ from django.utils.translation import get_language, gettext as _
 from django.views.decorators.http import require_http_methods, require_POST
 from django.views.decorators.csrf import csrf_exempt
 from .forms import RegisterApplicationForm, ContactCorrectionForm, StaffCreateForm
-from .models import (Application, Applicant, AuditLog, LoginAttempt, LookupAttempt, Notification,
+from .models import (Application, Applicant, AuditLog, LoginAttempt, Notification,
                      OfficerNote, Office, Profile, SmsTemplate, Stage, StageChange, UssdSession, hash_sensitive)
-from .services import notify, notify_stage, resend_last_notification, retry_notification, transition_application_stage
+from .services import notify_stage, resend_last_notification, retry_notification, transition_application_stage
 from .utils import audit, client_ip, mask_national_id, mask_phone, normalize_phone, tracking_code_for
-
 
 LOOKUP_LIMIT = 5
 LOOKUP_WINDOW_MINUTES = 15
@@ -86,7 +82,7 @@ def public_status(request):
         histories = [{
             "row": n,
             "label": template_labels.get(n.template_key, n.template_key),
-            "destination": mask_phone(n.to) if n.channel == "sms" else (n.to[:2] + "•••" + n.to[n.to.find("@"): ] if "@" in n.to else "••••"),
+            "destination": mask_phone(n.to) if n.channel == "sms" else (n.to[:2] + "•••" + n.to[n.to.find("@"):] if "@" in n.to else "••••"),
         } for n in notification_rows]
     context = {
         "application": application,
@@ -261,7 +257,6 @@ def register_application(request):
 
 @role_required("officer", "supervisor", "admin")
 def _handle_advance(request, application):
-    stages = {stage.key: stage for stage in Stage.objects.all()}
     next_stage = application.next_stage
     if not next_stage:
         messages.error(request, "This application has no next stage to advance to.")
@@ -480,7 +475,8 @@ def reports(request):
         writer = csv.writer(response)
         if kind == "monthly":
             writer.writerow(["Month", "Applications"])
-            for row in _monthly_counts(apps): writer.writerow([row["label"], row["count"]])
+            for row in _monthly_counts(apps):
+                writer.writerow([row["label"], row["count"]])
         elif kind == "delivery":
             writer.writerow(["Status", "Count"])
             notifications = Notification.objects.filter(application__in=apps)
@@ -488,7 +484,8 @@ def reports(request):
                 writer.writerow([label, notifications.filter(status=status).count()])
         else:
             writer.writerow(["Stage", "Applications", "Average days in stage"])
-            for row in _stage_metrics(apps): writer.writerow([row["stage"].name, row["count"], row["average_days"]])
+            for row in _stage_metrics(apps):
+                writer.writerow([row["stage"].name, row["count"], row["average_days"]])
         return response
     stage_metrics = _stage_metrics(apps)
     monthly = _monthly_counts(apps)
@@ -657,6 +654,7 @@ ADMIN_ACTION_HANDLERS = {
     "create_office": _admin_create_office,
 }
 
+
 @role_required("officer", "supervisor", "admin")
 def audit_log(request):
     from .audit_chain import verify_audit_chain
@@ -824,6 +822,7 @@ def _ussd_collection_response(office, lang):
     fields, keys = _ussd_collection_fields(office, lang)
     keys = _trim_ussd_collection_keys(fields, keys)
     return _render_ussd_collection(fields, keys)
+
 
 def _ussd_menu(lang):
     if lang == "ny":

@@ -1,6 +1,6 @@
 from django import forms
 from django.contrib.auth.models import User
-from .models import Office, Stage, SmsTemplate, Profile
+from .models import Stage, SmsTemplate, Profile
 from .utils import normalize_phone
 
 

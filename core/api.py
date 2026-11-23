@@ -1,16 +1,14 @@
 from django.conf import settings
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework import serializers, status
-from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import FormParser
 from rest_framework.renderers import BaseRenderer
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes
-from .models import Applicant, Application, AuditLog, Notification, Office, Profile, Stage, StageChange
+from .models import Applicant, Application, AuditLog, Notification, Office, Stage, StageChange
 from .services import notify_stage
 from .services import transition_application_stage
 from .utils import audit, client_ip, mask_phone, normalize_phone, tracking_code_for
@@ -53,7 +51,6 @@ class ApplicationReadSerializer(serializers.ModelSerializer):
 
     def get_notifications(self, obj) -> list[dict]:
         return [{"channel": row.channel, "status": row.status, "created_at": row.created_at, "provider_ref": row.provider_ref} for row in obj.notifications.order_by("-created_at")[:10]]
-
 
 
 class StageUpdateSerializer(serializers.Serializer):
