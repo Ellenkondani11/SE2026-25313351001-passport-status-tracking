@@ -8,11 +8,17 @@ class RegisterApplicationForm(forms.Form):
     national_id = forms.CharField(max_length=32, label="National ID")
     first_name = forms.CharField(max_length=80, label="First name")
     surname = forms.CharField(max_length=80, label="Surname")
-    phone = forms.CharField(max_length=24, label="Phone number", help_text="Use +265 followed by 9 digits, or a local 09/08 number.")
+    phone = forms.CharField(
+        max_length=24, label="Phone number",
+        help_text="Use +265 followed by 9 digits, or a local 09/08 number.",
+    )
     email = forms.EmailField(required=False, label="Email (optional)")
     date_of_birth = forms.DateField(required=False, label="Date of birth (optional)")
     language = forms.ChoiceField(choices=[("en", "English"), ("ny", "Chichewa")], label="Preferred language")
-    application_type = forms.ChoiceField(choices=[("new", "New passport"), ("renewal", "Renewal"), ("replacement", "Replacement")], label="Application type")
+    application_type = forms.ChoiceField(
+        choices=[("new", "New passport"), ("renewal", "Renewal"), ("replacement", "Replacement")],
+        label="Application type",
+    )
 
     def clean_national_id(self):
         value = self.cleaned_data["national_id"].strip().upper()
@@ -44,7 +50,10 @@ class StageEditForm(forms.ModelForm):
     class Meta:
         model = Stage
         fields = ["name", "applicant_text_en", "applicant_text_ny", "colour", "notify"]
-        widgets = {"applicant_text_en": forms.Textarea(attrs={"rows": 2}), "applicant_text_ny": forms.Textarea(attrs={"rows": 2})}
+        widgets = {
+            "applicant_text_en": forms.Textarea(attrs={"rows": 2}),
+            "applicant_text_ny": forms.Textarea(attrs={"rows": 2}),
+        }
 
 
 class SmsTemplateForm(forms.ModelForm):

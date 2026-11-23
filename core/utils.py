@@ -14,8 +14,11 @@ def audit(request, action, obj=None, details=None, user=None):
         object_id = str(getattr(obj, "pk", ""))
     else:
         object_type, object_id = "", ""
+    user_value = user
+    if getattr(request, "user", None) and request.user.is_authenticated:
+        user_value = request.user
     return AuditLog.objects.create(
-        user=user or getattr(request, "user", None) if getattr(request, "user", None) and request.user.is_authenticated else user,
+        user=user_value,
         action=action,
         object_type=object_type,
         object_id=object_id,

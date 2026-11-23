@@ -5,7 +5,11 @@ from rest_framework.permissions import AllowAny
 
 urlpatterns = [
     path("django-admin/", admin.site.urls),
-    path("api/schema/", SpectacularAPIView.as_view(authentication_classes=[], permission_classes=[AllowAny]), name="schema"),
+    path(
+        "api/schema/",
+        SpectacularAPIView.as_view(authentication_classes=[], permission_classes=[AllowAny]),
+        name="schema",
+    ),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("", include("core.urls")),
 ]

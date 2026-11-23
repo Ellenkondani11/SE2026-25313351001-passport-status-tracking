@@ -40,7 +40,10 @@ class Applicant(models.Model):
     national_id = models.CharField(max_length=32, unique=True)
     first_name = models.CharField(max_length=80)
     surname = models.CharField(max_length=80)
-    phone = models.CharField(max_length=24, validators=[RegexValidator(r"^\+265[0-9]{9}$", "Use an E.164 Malawi number, e.g. +265991234567.")])
+    phone = models.CharField(
+        max_length=24,
+        validators=[RegexValidator(r"^\+265[0-9]{9}$", "Use an E.164 Malawi number, e.g. +265991234567.")],
+    )
     email = models.EmailField(blank=True)
     language = models.CharField(max_length=2, choices=LANGUAGE_CHOICES, default="en")
     date_of_birth = models.DateField(null=True, blank=True)
@@ -87,7 +90,10 @@ class Stage(models.Model):
 
 class Application(models.Model):
     TYPE_CHOICES = [("new", _("New passport")), ("renewal", _("Renewal")), ("replacement", _("Replacement"))]
-    STATUS_CHOICES = [("active", _("Active")), ("on_hold", _("On hold")), ("collected", _("Collected")), ("rejected", _("Rejected"))]
+    STATUS_CHOICES = [
+        ("active", _("Active")), ("on_hold", _("On hold")),
+        ("collected", _("Collected")), ("rejected", _("Rejected")),
+    ]
     tracking_code = models.CharField(max_length=40, unique=True)
     applicant = models.ForeignKey(Applicant, on_delete=models.PROTECT, related_name="applications")
     office = models.ForeignKey(Office, on_delete=models.PROTECT, related_name="applications")
@@ -96,7 +102,10 @@ class Application(models.Model):
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="active")
     received_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
-    previous_stage = models.ForeignKey(Stage, on_delete=models.SET_NULL, null=True, blank=True, related_name="held_applications")
+    previous_stage = models.ForeignKey(
+        Stage, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="held_applications",
+    )
 
     class Meta:
         ordering = ["-updated_at", "tracking_code"]
@@ -115,7 +124,10 @@ class Application(models.Model):
     def next_stage(self):
         if self.status != "active":
             return None
-        return Stage.objects.filter(order__gt=self.current_stage.order, key__in=["under_review", "approved", "printed", "ready"]).order_by("order").first()
+        return Stage.objects.filter(
+            order__gt=self.current_stage.order,
+            key__in=["under_review", "approved", "printed", "ready"],
+        ).order_by("order").first()
 
     @property
     def last_notification(self):
@@ -139,7 +151,10 @@ class StageChange(models.Model):
 
 class Notification(models.Model):
     CHANNEL_CHOICES = [("sms", _("SMS")), ("email", _("Email")), ("ussd", _("USSD"))]
-    STATUS_CHOICES = [("queued", _("Queued")), ("sent", _("Sent")), ("delivered", _("Delivered")), ("failed", _("Failed"))]
+    STATUS_CHOICES = [
+        ("queued", _("Queued")), ("sent", _("Sent")),
+        ("delivered", _("Delivered")), ("failed", _("Failed")),
+    ]
     application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name="notifications")
     channel = models.CharField(max_length=12, choices=CHANNEL_CHOICES, default="sms")
     to = models.CharField(max_length=254)

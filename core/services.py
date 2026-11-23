@@ -131,7 +131,9 @@ def retry_notification(notification, actor=None, ip=None):
     return send_notification(notification, actor=actor, ip=ip)
 
 
-def transition_application_stage(application, target_stage, actor=None, reason="", new_status=None, ip=None, notify=True):
+def transition_application_stage(
+    application, target_stage, actor=None, reason="", new_status=None, ip=None, notify=True,
+):
     old = application.current_stage
     application.current_stage = target_stage
     if new_status:
