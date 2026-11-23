@@ -1,4 +1,6 @@
 from django.core.management.base import BaseCommand
+from django.db.models import F, Q
+from django.utils import timezone
 from core.models import Notification
 from core.services import retry_notification
 
@@ -9,7 +11,10 @@ class Command(BaseCommand):
         parser.add_argument("--limit", type=int, default=100)
 
     def handle(self, *args, **options):
-        rows = Notification.objects.filter(status__in=["queued", "failed"]).order_by("created_at")[:options["limit"]]
+        now = timezone.now()
+        rows = Notification.objects.filter(status__in=["queued", "failed"]).filter(
+            retry_count__lt=F("max_retries")
+        ).filter(Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now)).order_by("created_at")[:options["limit"]]
         sent = failed = 0
         for row in rows:
             retry_notification(row)

@@ -82,7 +82,10 @@ Use the matching applicant phone or tracking code as the second lookup factor. `
 
 ```bash
 python manage.py test
+python manage.py verify_slices
 ```
+
+`verify_slices` runs the three end-to-end vertical slices (web status, SMS outbox + delivery callback, USSD status) and exits non-zero if any fail.
 
 The browser test is optional for normal runtime, and is in `requirements-dev.txt`:
 

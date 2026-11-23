@@ -20,7 +20,7 @@ from django.views.decorators.csrf import csrf_exempt
 from .forms import RegisterApplicationForm, ContactCorrectionForm, StaffCreateForm
 from .models import (Application, Applicant, AuditLog, LoginAttempt, LookupAttempt, Notification,
                      OfficerNote, Office, Profile, SmsTemplate, Stage, StageChange, UssdSession, hash_sensitive)
-from .services import notify, notify_stage, resend_last_notification, retry_notification
+from .services import notify, notify_stage, resend_last_notification, retry_notification, transition_application_stage
 from .utils import audit, client_ip, mask_national_id, mask_phone, normalize_phone, tracking_code_for
 
 
@@ -260,97 +260,126 @@ def register_application(request):
 
 
 @role_required("officer", "supervisor", "admin")
+def _handle_advance(request, application):
+    stages = {stage.key: stage for stage in Stage.objects.all()}
+    next_stage = application.next_stage
+    if not next_stage:
+        messages.error(request, "This application has no next stage to advance to.")
+        return
+    transition_application_stage(application, next_stage, actor=request.user, reason="Advanced one stage", ip=client_ip(request))
+    messages.success(request, f"Advanced to {next_stage.name}.")
+
+
+def _handle_move(request, application):
+    stages = {stage.key: stage for stage in Stage.objects.all()}
+    target = stages.get(request.POST.get("target_stage"))
+    reason = (request.POST.get("reason") or "").strip()
+    if request.user.profile.role not in ("supervisor", "admin"):
+        messages.error(request, "A supervisor must approve a backward move or skipped stage.")
+        return
+    if not target or not reason:
+        messages.error(request, "Choose a stage and enter a reason.")
+        return
+    transition_application_stage(application, target, actor=request.user, reason=reason, ip=client_ip(request))
+    messages.success(request, f"Moved to {target.name}.")
+
+
+def _handle_hold(request, application):
+    reason = (request.POST.get("reason") or "").strip()
+    if not reason:
+        messages.error(request, "Enter a reason for putting this application on hold.")
+        return
+    hold_stage = Stage.objects.get(key="on_hold")
+    transition_application_stage(application, hold_stage, actor=request.user, reason=reason, new_status="on_hold", ip=client_ip(request))
+    messages.success(request, "Application put on hold.")
+
+
+def _handle_resume(request, application):
+    if application.status != "on_hold":
+        messages.error(request, "This application is not on hold.")
+        return
+    prior = application.previous_stage
+    if prior is None:
+        prior = Stage.objects.get(key="received")
+    transition_application_stage(application, prior, actor=request.user, reason="Resumed from hold", new_status="active", ip=client_ip(request))
+    messages.success(request, "Application resumed.")
+
+
+def _handle_collect(request, application):
+    stages = {stage.key: stage for stage in Stage.objects.all()}
+    if application.current_stage.key != "ready" and request.user.profile.role not in ("supervisor", "admin"):
+        messages.error(request, "Only a supervisor can mark an application collected before it is ready.")
+        return
+    reason = request.POST.get("reason") or "Passport collected"
+    transition_application_stage(application, stages["collected"], actor=request.user, reason=reason, new_status="collected", ip=client_ip(request))
+    messages.success(request, "Application marked as collected.")
+
+
+def _handle_reject(request, application):
+    stages = {stage.key: stage for stage in Stage.objects.all()}
+    reason = (request.POST.get("reason") or "").strip()
+    if request.user.profile.role not in ("supervisor", "admin") or not reason:
+        messages.error(request, "A supervisor and a reason are required to reject an application.")
+        return
+    transition_application_stage(application, stages["rejected"], actor=request.user, reason=reason, new_status="rejected", ip=client_ip(request))
+    messages.success(request, "Application marked as rejected.")
+
+
+def _handle_note(request, application):
+    body = (request.POST.get("note") or "").strip()
+    if body:
+        OfficerNote.objects.create(application=application, user=request.user, body=body[:600])
+        audit(request, "officer_note_added", application, {"note_length": len(body)})
+        messages.success(request, "Note added.")
+
+
+def _handle_correct_contact(request, application):
+    form = ContactCorrectionForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Enter a valid new phone number and reason.")
+        return
+    old_phone = application.applicant.phone
+    application.applicant.phone = form.cleaned_data["phone"]
+    application.applicant.email = form.cleaned_data["email"]
+    application.applicant.save(update_fields=["phone", "email"])
+    audit(request, "contact_corrected", application, {
+        "old_phone": mask_phone(old_phone), "new_phone": mask_phone(application.applicant.phone),
+        "reason": form.cleaned_data["reason"][:160],
+    })
+    messages.success(request, "Contact details updated. The correction was recorded in the audit log.")
+
+
+def _handle_resend(request, application):
+    resent = resend_last_notification(application, actor=request.user, ip=client_ip(request))
+    if resent:
+        audit(request, "notification_resent", resent, {"status": resent.status})
+        messages.success(request, f"Notification resent to the current contact: {resent.get_status_display()}.")
+    else:
+        messages.error(request, "There is no notification or current contact to resend to.")
+
+
+APPLICATION_ACTION_HANDLERS = {
+    "advance": _handle_advance,
+    "move": _handle_move,
+    "hold": _handle_hold,
+    "resume": _handle_resume,
+    "collect": _handle_collect,
+    "reject": _handle_reject,
+    "note": _handle_note,
+    "correct_contact": _handle_correct_contact,
+    "resend": _handle_resend,
+}
+
+
 def application_detail(request, code):
     application = get_object_or_404(office_queryset(request), tracking_code=code)
     if request.method == "POST":
         action = request.POST.get("action")
-        stages = {stage.key: stage for stage in Stage.objects.all()}
-        if action == "advance":
-            next_stage = application.next_stage
-            if not next_stage:
-                messages.error(request, "This application has no next stage to advance to.")
-            else:
-                _change_stage(request, application, next_stage, reason="Advanced one stage")
-                messages.success(request, f"Advanced to {next_stage.name}.")
-        elif action == "move":
-            target = stages.get(request.POST.get("target_stage"))
-            reason = (request.POST.get("reason") or "").strip()
-            if request.user.profile.role not in ("supervisor", "admin"):
-                messages.error(request, "A supervisor must approve a backward move or skipped stage.")
-            elif not target or not reason:
-                messages.error(request, "Choose a stage and enter a reason.")
-            else:
-                _change_stage(request, application, target, reason=reason)
-                messages.success(request, f"Moved to {target.name}.")
-        elif action == "hold":
-            reason = (request.POST.get("reason") or "").strip()
-            if not reason:
-                messages.error(request, "Enter a reason for putting this application on hold.")
-            else:
-                hold_stage = stages.get("on_hold")
-                application.previous_stage = application.current_stage
-                application.status = "on_hold"
-                application.current_stage = hold_stage
-                application.save()
-                StageChange.objects.create(application=application, from_stage=application.previous_stage, to_stage=hold_stage, by_user=request.user, reason=reason)
-                audit(request, "application_put_on_hold", application, {"reason": reason[:160]})
-                notify_stage(application, hold_stage, actor=request.user, ip=client_ip(request))
-                messages.success(request, "Application put on hold.")
-        elif action == "resume":
-            if application.status != "on_hold":
-                messages.error(request, "This application is not on hold.")
-            else:
-                prior = application.previous_stage or stages["received"]
-                old = application.current_stage
-                application.current_stage = prior
-                application.status = "active"
-                application.previous_stage = None
-                application.save()
-                StageChange.objects.create(application=application, from_stage=old, to_stage=prior, by_user=request.user, reason="Resumed from hold")
-                audit(request, "application_resumed", application, {"stage": prior.key})
-                messages.success(request, "Application resumed.")
-        elif action == "collect":
-            if application.current_stage.key != "ready" and request.user.profile.role not in ("supervisor", "admin"):
-                messages.error(request, "Only a supervisor can mark an application collected before it is ready.")
-            else:
-                _change_stage(request, application, stages["collected"], reason=(request.POST.get("reason") or "Passport collected"), new_status="collected")
-                messages.success(request, "Application marked as collected.")
-        elif action == "reject":
-            reason = (request.POST.get("reason") or "").strip()
-            if request.user.profile.role not in ("supervisor", "admin") or not reason:
-                messages.error(request, "A supervisor and a reason are required to reject an application.")
-            else:
-                _change_stage(request, application, stages["rejected"], reason=reason, new_status="rejected")
-                messages.success(request, "Application marked as rejected.")
-        elif action == "note":
-            body = (request.POST.get("note") or "").strip()
-            if body:
-                OfficerNote.objects.create(application=application, user=request.user, body=body[:600])
-                audit(request, "officer_note_added", application, {"note_length": len(body)})
-                messages.success(request, "Note added.")
-        elif action == "correct_contact":
-            form = ContactCorrectionForm(request.POST)
-            if form.is_valid():
-                old_phone = application.applicant.phone
-                application.applicant.phone = form.cleaned_data["phone"]
-                application.applicant.email = form.cleaned_data["email"]
-                application.applicant.save(update_fields=["phone", "email"])
-                audit(request, "contact_corrected", application, {
-                    "old_phone": mask_phone(old_phone), "new_phone": mask_phone(application.applicant.phone),
-                    "reason": form.cleaned_data["reason"][:160],
-                })
-                messages.success(request, "Contact details updated. The correction was recorded in the audit log.")
-            else:
-                messages.error(request, "Enter a valid new phone number and reason.")
-        elif action == "resend":
-            resent = resend_last_notification(application, actor=request.user, ip=client_ip(request))
-            if resent:
-                audit(request, "notification_resent", resent, {"status": resent.status})
-                messages.success(request, f"Notification resent to the current contact: {resent.get_status_display()}.")
-            else:
-                messages.error(request, "There is no notification or current contact to resend to.")
-        else:
+        handler = APPLICATION_ACTION_HANDLERS.get(action)
+        if handler is None:
             messages.error(request, "Unknown action.")
+        else:
+            handler(request, application)
         return redirect("application_detail", code=code)
     changes = list(application.stage_changes.select_related("from_stage", "to_stage", "by_user").order_by("-at"))
     notes = list(application.notes.select_related("user"))
@@ -369,25 +398,10 @@ def application_detail(request, code):
 
 
 def _change_stage(request, application, stage, reason="", new_status=None, notify_override=True):
-    old = application.current_stage
-    application.current_stage = stage
-    if new_status:
-        application.status = new_status
-    elif stage.key == "collected":
-        application.status = "collected"
-    elif stage.key == "rejected":
-        application.status = "rejected"
-    elif stage.key == "on_hold":
-        application.previous_stage = old
-        application.status = "on_hold"
-    else:
-        application.status = "active"
-        application.previous_stage = None
-    application.save()
-    StageChange.objects.create(application=application, from_stage=old, to_stage=stage, by_user=request.user, reason=reason[:240])
-    audit(request, "stage_changed", application, {"from": old.key, "to": stage.key, "reason": reason[:160]})
-    if notify_override:
-        notify_stage(application, stage, actor=request.user, ip=client_ip(request))
+    transition_application_stage(
+        application, stage, actor=request.user, reason=reason, new_status=new_status,
+        ip=client_ip(request), notify=notify_override,
+    )
 
 
 @role_required("officer", "supervisor", "admin")
@@ -538,72 +552,11 @@ def _monthly_counts(apps):
 def admin_console(request):
     if request.method == "POST":
         action = request.POST.get("action")
-        if action == "create_user":
-            form = StaffCreateForm(request.POST)
-            if form.is_valid():
-                user = User.objects.create_user(username=form.cleaned_data["username"], password=form.cleaned_data["password"], first_name=form.cleaned_data["first_name"], last_name=form.cleaned_data["surname"])
-                profile = user.profile
-                profile.role = form.cleaned_data["role"]
-                profile.office = get_office(request)
-                profile.save()
-                audit(request, "staff_user_created", user, {"role": profile.role})
-                messages.success(request, "Staff account created.")
-            else:
-                messages.error(request, "Review the user form and try again.")
-        elif action == "set_role":
-            target_user = get_object_or_404(User, pk=request.POST.get("user_id"))
-            role = request.POST.get("role")
-            if role in dict(Profile.ROLE_CHOICES):
-                target_user.profile.role = role
-                target_user.profile.office = get_office(request)
-                target_user.profile.save()
-                audit(request, "staff_role_changed", target_user, {"role": role})
-                messages.success(request, "Staff role updated.")
-        elif action == "save_stage":
-            stage = get_object_or_404(Stage, pk=request.POST.get("stage_id"))
-            stage.name = request.POST.get("name", stage.name)[:60]
-            stage.applicant_text_en = request.POST.get("applicant_text_en", stage.applicant_text_en)[:280]
-            stage.applicant_text_ny = request.POST.get("applicant_text_ny", stage.applicant_text_ny)[:280]
-            stage.colour = request.POST.get("colour", stage.colour)[:20]
-            stage.notify = request.POST.get("notify") == "on"
-            stage.save()
-            audit(request, "stage_definition_updated", stage, {"key": stage.key})
-            messages.success(request, "Stage definition saved.")
-        elif action == "save_template":
-            template = get_object_or_404(SmsTemplate, pk=request.POST.get("template_id"))
-            body_en = request.POST.get("body_en", template.body_en)
-            body_ny = request.POST.get("body_ny", template.body_ny)
-            if len(body_en) > 160 or len(body_ny) > 160:
-                messages.error(request, "SMS templates must be 160 characters or fewer. Unicode messages may use multiple SMS segments.")
-                return redirect("admin_console")
-            template.name = request.POST.get("name", template.name)[:80]
-            template.body_en = body_en
-            template.body_ny = body_ny
-            template.is_active = request.POST.get("is_active") == "on"
-            template.save()
-            audit(request, "sms_template_updated", template, {"key": template.key})
-            messages.success(request, "SMS template saved.")
-        elif action == "update_office":
-            office = get_object_or_404(Office, pk=request.POST.get("office_id"))
-            office.name = request.POST.get("name", office.name)[:100]
-            office.district = request.POST.get("district", office.district)[:80]
-            office.phone = request.POST.get("phone", office.phone)[:40]
-            office.address = request.POST.get("address", office.address)[:240]
-            office.collection_hours = request.POST.get("collection_hours", office.collection_hours)[:120]
-            office.collection_hours_ny = request.POST.get("collection_hours_ny", office.collection_hours_ny)[:120]
-            office.save()
-            audit(request, "office_updated", office)
-            messages.success(request, "Office details saved.")
-        elif action == "create_office":
-            code = (request.POST.get("code") or "").strip().upper()
-            name = (request.POST.get("name") or "").strip()
-            if code and name:
-                office, created = Office.objects.get_or_create(code=code, defaults={"name": name, "district": request.POST.get("district", "")[:80], "phone": request.POST.get("phone", "")[:40], "address": request.POST.get("address", "")[:240], "collection_hours": request.POST.get("collection_hours", "")[:120], "collection_hours_ny": request.POST.get("collection_hours_ny", "")[:120]})
-                if created:
-                    audit(request, "office_created", office)
-                    messages.success(request, "Office added.")
-                else:
-                    messages.error(request, "An office with that code already exists.")
+        handler = ADMIN_ACTION_HANDLERS.get(action)
+        if handler is None:
+            messages.error(request, "Unknown action.")
+        else:
+            handler(request)
         return redirect("admin_console")
     return render(request, "core/admin_console.html", {
         "staff": User.objects.select_related("profile", "profile__office").order_by("username"),
@@ -611,6 +564,98 @@ def admin_console(request):
         "staff_form": StaffCreateForm(),
     })
 
+
+def _admin_create_user(request):
+    form = StaffCreateForm(request.POST)
+    if form.is_valid():
+        user = User.objects.create_user(username=form.cleaned_data["username"], password=form.cleaned_data["password"], first_name=form.cleaned_data["first_name"], last_name=form.cleaned_data["surname"])
+        profile = user.profile
+        profile.role = form.cleaned_data["role"]
+        profile.office = get_office(request)
+        profile.save()
+        audit(request, "staff_user_created", user, {"role": profile.role})
+        messages.success(request, "Staff account created.")
+    else:
+        messages.error(request, "Review the user form and try again.")
+
+
+def _admin_set_role(request):
+    target_user = get_object_or_404(User, pk=request.POST.get("user_id"))
+    role = request.POST.get("role")
+    if role in dict(Profile.ROLE_CHOICES):
+        target_user.profile.role = role
+        target_user.profile.office = get_office(request)
+        target_user.profile.save()
+        audit(request, "staff_role_changed", target_user, {"role": role})
+        messages.success(request, "Staff role updated.")
+
+
+def _admin_save_stage(request):
+    stage = get_object_or_404(Stage, pk=request.POST.get("stage_id"))
+    stage.name = request.POST.get("name", stage.name)[:60]
+    stage.applicant_text_en = request.POST.get("applicant_text_en", stage.applicant_text_en)[:280]
+    stage.applicant_text_ny = request.POST.get("applicant_text_ny", stage.applicant_text_ny)[:280]
+    stage.colour = request.POST.get("colour", stage.colour)[:20]
+    stage.notify = request.POST.get("notify") == "on"
+    stage.save()
+    audit(request, "stage_definition_updated", stage, {"key": stage.key})
+    messages.success(request, "Stage definition saved.")
+
+
+def _admin_save_template(request):
+    template = get_object_or_404(SmsTemplate, pk=request.POST.get("template_id"))
+    body_en = request.POST.get("body_en", template.body_en)
+    body_ny = request.POST.get("body_ny", template.body_ny)
+    if len(body_en) > 160 or len(body_ny) > 160:
+        messages.error(request, "SMS templates must be 160 characters or fewer. Unicode messages may use multiple SMS segments.")
+        return
+    template.name = request.POST.get("name", template.name)[:80]
+    template.body_en = body_en
+    template.body_ny = body_ny
+    template.is_active = request.POST.get("is_active") == "on"
+    template.save()
+    audit(request, "sms_template_updated", template, {"key": template.key})
+    messages.success(request, "SMS template saved.")
+
+
+def _admin_update_office(request):
+    office = get_object_or_404(Office, pk=request.POST.get("office_id"))
+    office.name = request.POST.get("name", office.name)[:100]
+    office.district = request.POST.get("district", office.district)[:80]
+    office.phone = request.POST.get("phone", office.phone)[:40]
+    office.address = request.POST.get("address", office.address)[:240]
+    office.collection_hours = request.POST.get("collection_hours", office.collection_hours)[:120]
+    office.collection_hours_ny = request.POST.get("collection_hours_ny", office.collection_hours_ny)[:120]
+    office.save()
+    audit(request, "office_updated", office)
+    messages.success(request, "Office details saved.")
+
+
+def _admin_create_office(request):
+    code = (request.POST.get("code") or "").strip().upper()
+    name = (request.POST.get("name") or "").strip()
+    if code and name:
+        office, created = Office.objects.get_or_create(code=code, defaults={
+            "name": name, "district": request.POST.get("district", "")[:80],
+            "phone": request.POST.get("phone", "")[:40], "address": request.POST.get("address", "")[:240],
+            "collection_hours": request.POST.get("collection_hours", "")[:120],
+            "collection_hours_ny": request.POST.get("collection_hours_ny", "")[:120],
+        })
+        if created:
+            audit(request, "office_created", office)
+            messages.success(request, "Office added.")
+        else:
+            messages.error(request, "An office with that code already exists.")
+
+
+ADMIN_ACTION_HANDLERS = {
+    "create_user": _admin_create_user,
+    "set_role": _admin_set_role,
+    "save_stage": _admin_save_stage,
+    "save_template": _admin_save_template,
+    "update_office": _admin_update_office,
+    "create_office": _admin_create_office,
+}
 
 @role_required("officer", "supervisor", "admin")
 def audit_log(request):
@@ -634,6 +679,82 @@ def officer_ussd_sim(request):
 
 
 @csrf_exempt
+def _ussd_find_application(parts, phone):
+    national_id = parts[1].strip().upper()[:32] if len(parts) > 1 else ""
+    choice = "*".join(parts[2:]).strip() if len(parts) > 2 else ""
+    apps = Application.objects.filter(applicant__national_id__iexact=national_id).select_related("applicant", "current_stage", "office").order_by("-updated_at")
+    if choice == "0":
+        return apps.filter(applicant__phone=phone).first(), national_id
+    if choice:
+        return apps.filter(tracking_code__iexact=choice.upper()).first(), national_id
+    return None, national_id
+
+
+def _ussd_status_response(parts, phone, lang, state):
+    if len(parts) == 1:
+        state["screen"] = "national_id"
+        text = "CON Enter your National ID:" if lang == "en" else "CON Lowetsani nambala ya ID yanu:"
+        return text, state
+    if len(parts) == 2:
+        state["national_id"] = parts[1][:32]
+        state["screen"] = "lookup_method"
+        text = "CON Enter tracking code, or 0 to use this phone:" if lang == "en" else "CON Lowetsani tracking code, kapena 0 kugwiritsa ntchito foniyi:"
+        return text, state
+    application, national_id = _ussd_find_application(parts, phone)
+    state["screen"] = "done"
+    if application:
+        with translation.override(lang):
+            stage_name = _(application.current_stage.name)
+            stage_text = application.current_stage.applicant_text(lang)
+        response = f"END {application.tracking_code}: {stage_name}. {stage_text}"
+        audit(None, "ussd_lookup", application, {"success": True, "national_id_hash": hash_sensitive(national_id)})
+        return response, state
+    response = "END We could not match those details. Contact Mangochi office." if lang == "en" else "END Sitinapeze zambiri zimenezi. Lumikizanani ndi ofesi ya Mangochi."
+    audit(None, "ussd_lookup", details={"success": False, "national_id_hash": hash_sensitive(national_id)})
+    return response, state
+
+
+def _ussd_language_response(parts, lang, state):
+    if len(parts) == 1:
+        state["screen"] = "language"
+        text = "CON Choose language\n1 English\n2 Chichewa" if lang == "en" else "CON Sankhani chinenero\n1 Chingelezi\n2 Chichewa"
+        return text, lang, state
+    if len(parts) == 2 and parts[1] in ("1", "2"):
+        lang = "en" if parts[1] == "1" else "ny"
+        state["language"] = lang
+        response = "END Language set to English." if lang == "en" else "END Chinenero chasankhidwa: Chichewa."
+        return response, lang, state
+    return "END Invalid option.", lang, state
+
+
+def _ussd_handle_status(parts, phone, lang, state):
+    response, state = _ussd_status_response(parts, phone, lang, state)
+    return response, lang, state
+
+
+def _ussd_handle_collection(parts, phone, lang, state):
+    office = Office.objects.filter(code="MGC").first() or Office.objects.first()
+    if office:
+        response = _ussd_collection_response(office, lang)
+    else:
+        fallback = "Mangochi Immigration Office. Mon-Fri 08:00-16:00." if lang == "en" else "Ofesi ya Mangochi. Lolemba-Lachisanu, 08:00-16:00."
+        response = "END " + fallback
+    state["screen"] = "done"
+    return response, lang, state
+
+
+def _ussd_handle_language(parts, phone, lang, state):
+    response, lang, state = _ussd_language_response(parts, lang, state)
+    return response, lang, state
+
+
+_USSD_HANDLERS = {
+    "1": _ussd_handle_status,
+    "2": _ussd_handle_collection,
+    "3": _ussd_handle_language,
+}
+
+
 def ussd_endpoint(request):
     """Africa's Talking USSD callback: form fields sessionId, phoneNumber, text."""
     from django.http import HttpResponse
@@ -643,7 +764,7 @@ def ussd_endpoint(request):
     session_id = (data.get("sessionId") or data.get("session_id") or "demo").strip()[:120]
     phone = normalize_phone(data.get("phoneNumber") or data.get("phone") or "")
     text = (data.get("text") or "").strip()
-    session, created_session = UssdSession.objects.get_or_create(session_id=session_id, defaults={"phone": phone, "state": {"language": "en"}})
+    session, _ = UssdSession.objects.get_or_create(session_id=session_id, defaults={"phone": phone, "state": {"language": "en"}})
     if phone:
         session.phone = phone
     state = session.state or {"language": "en"}
@@ -652,67 +773,19 @@ def ussd_endpoint(request):
     if not parts:
         response = _ussd_menu(lang)
         state["screen"] = "menu"
-    elif parts[0] == "1":
-        if len(parts) == 1:
-            response = "CON Enter your National ID:" if lang == "en" else "CON Lowetsani nambala ya ID yanu:"
-            state["screen"] = "national_id"
-        elif len(parts) == 2:
-            response = "CON Enter tracking code, or 0 to use this phone:" if lang == "en" else "CON Lowetsani tracking code, kapena 0 kugwiritsa ntchito foniyi:"
-            state["national_id"] = parts[1][:32]
-            state["screen"] = "lookup_method"
-        else:
-            national_id = parts[1].strip().upper()[:32]
-            choice = "*".join(parts[2:]).strip()
-            apps = Application.objects.filter(applicant__national_id__iexact=national_id).select_related("applicant", "current_stage", "office").order_by("-updated_at")
-            application = None
-            if choice == "0":
-                application = apps.filter(applicant__phone=phone).first()
-            else:
-                application = apps.filter(tracking_code__iexact=choice.upper()).first()
-            if application:
-                with translation.override(lang):
-                    stage_name = _(application.current_stage.name)
-                    stage_text = application.current_stage.applicant_text(lang)
-                response = f"END {application.tracking_code}: {stage_name}. {stage_text}"
-                audit(None, "ussd_lookup", application, {"success": True, "national_id_hash": hash_sensitive(national_id)})
-            else:
-                response = "END We could not match those details. Contact Mangochi office." if lang == "en" else "END Sitinapeze zambiri zimenezi. Lumikizanani ndi ofesi ya Mangochi."
-                audit(None, "ussd_lookup", details={"success": False, "national_id_hash": hash_sensitive(national_id)})
-            state["screen"] = "done"
-    elif parts[0] == "2":
-        office = Office.objects.filter(code="MGC").first() or Office.objects.first()
-        if office:
-            response = _ussd_collection_response(office, lang)
-        else:
-            text_response = "Mangochi Immigration Office. Mon-Fri 08:00-16:00." if lang == "en" else "Ofesi ya Mangochi. Lolemba-Lachisanu, 08:00-16:00."
-            response = "END " + text_response
-        state["screen"] = "done"
-    elif parts[0] == "3":
-        if len(parts) == 1:
-            response = "CON Choose language\n1 English\n2 Chichewa" if lang == "en" else "CON Sankhani chinenero\n1 Chingelezi\n2 Chichewa"
-            state["screen"] = "language"
-        elif len(parts) == 2 and parts[1] in ("1", "2"):
-            lang = "en" if parts[1] == "1" else "ny"
-            state["language"] = lang
-            response = "END Language set to English." if lang == "en" else "END Chinenero chasankhidwa: Chichewa."
-        else:
-            response = "END Invalid option."
     else:
-        response = "END Invalid option. Dial again to start."
+        handler = _USSD_HANDLERS.get(parts[0])
+        if handler is None:
+            response = "END Invalid option. Dial again to start."
+        else:
+            response, lang, state = handler(parts, phone, lang, state)
     response = _bound_ussd(response)
     session.state = state
     session.save()
     return HttpResponse(response, content_type="text/plain; charset=utf-8")
 
 
-def _ussd_menu(lang):
-    if lang == "ny":
-        return "CON PASTNS pasipoti\n1 Fufuzani momwe ilili\n2 Zokhudza kutenga\n3 Sankhani chinenero"
-    return "CON PASTNS passport\n1 Check status\n2 Collection information\n3 Change language"
-
-
-def _ussd_collection_response(office, lang):
-    """Keep collection hours intact while fitting optional office details into one USSD screen."""
+def _ussd_collection_fields(office, lang):
     is_chichewa = lang == "ny"
     hours = (office.collection_hours_for(lang) or "").strip()
     if not hours:
@@ -729,21 +802,33 @@ def _ussd_collection_response(office, lang):
     verbose_prefix = "Immigration Office, along the "
     if address.startswith(verbose_prefix):
         address = address[len(verbose_prefix):]
-
     fields = {"name": name.strip(), "address": address, "hours": hours_text, "phone": phone_text}
     keys = [key for key in ("name", "address", "hours", "phone") if fields[key]]
+    return fields, keys
 
-    def render():
-        return "END " + ". ".join(fields[key] for key in keys) + "."
 
-    # Hours are mandatory; drop address/name/phone in that order if custom office
-    # details would otherwise push the response past Africa's Talking's 160 chars.
+def _render_ussd_collection(fields, keys):
+    return "END " + ". ".join(fields[key] for key in keys) + "."
+
+
+def _trim_ussd_collection_keys(fields, keys):
     for optional in ("address", "name", "phone"):
-        if len(render()) <= 160:
+        if len(_render_ussd_collection(fields, keys)) <= 160:
             break
         if optional in keys:
             keys.remove(optional)
-    return render()
+    return keys
+
+
+def _ussd_collection_response(office, lang):
+    fields, keys = _ussd_collection_fields(office, lang)
+    keys = _trim_ussd_collection_keys(fields, keys)
+    return _render_ussd_collection(fields, keys)
+
+def _ussd_menu(lang):
+    if lang == "ny":
+        return "CON PASTNS pasipoti\n1 Fufuzani momwe ilili\n2 Zokhudza kutenga\n3 Sankhani chinenero"
+    return "CON PASTNS passport\n1 Check status\n2 Collection information\n3 Change language"
 
 
 def _bound_ussd(response):
