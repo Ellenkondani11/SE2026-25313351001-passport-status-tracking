@@ -1,0 +1,35 @@
+%% KAOS Goal Model — PassTrack (PASTNS)
+%% Token: EK01-HAZY-VM26 | Student: 25313351001
+graph TD
+    G0["G0: Provide consistent, private, auditable passport status tracking across Web, SMS, USSD"]
+
+    G0 --> G1["G1: Consistency — all channels show identical stage within 60s"]
+    G0 --> G2["G2: Reliable notifications — retry, dedup, delivery reports"]
+    G0 --> G3["G3: Private lookup — two-factor, rate-limited, session TTL"]
+    G0 --> G4["G4: Auditability — tamper-evident hash-chained log"]
+    G0 --> G5["G5: Performance & availability NFRs"]
+
+    %% Obstacles
+    O1["O1: Stage/SmsTemplate text divergence"] -.->|threatens| G1
+    O2["O2: resume omits SMS notify"] -.->|threatens| G1
+    O3["O3: No backoff / idempotency / callback auth"] -.->|threatens| G2
+    O4["O4: Missing DOB / OTP / IP limit / session TTL"] -.->|threatens| G3
+    O5["O5: AuditLog mutable via SQL / bulk update"] -.->|threatens| G4
+
+    %% Requirements (mitigations)
+    R1["FR-17/FR-25: Unified message source + consistency check"] -->|mitigates| O1
+    R2["FR-08/FR-17: resume triggers notify"] -->|mitigates| O2
+    R3["FR-18/FR-19: Backoff + idempotency key + callback token"] -->|mitigates| O3
+    R4["FR-20/FR-21: DOB + OTP + IP/ID rate limits + 15-min TTL"] -->|mitigates| O4
+    R5["FR-22: prev_hash/entry_hash + verify command"] -->|mitigates| O5
+
+    %% Agents
+    A1["Agent: Applicant"] --> G3
+    A2["Agent: Officer"] --> G1
+    A3["Agent: Supervisor"] --> G4
+    A4["Agent: Admin"] --> G5
+    A5["Agent: SMS Gateway"] --> G2
+    A6["Agent: System"] --> G0
+
+    Footer["Token: EK01-HAZY-VM26 | Student: 25313351001"]
+    G0 --> Footer
