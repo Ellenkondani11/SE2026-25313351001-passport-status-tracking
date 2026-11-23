@@ -29,7 +29,20 @@
         <p class="hint" id="lookup-hint">{% translate "Use the phone number on your application or the code on your receipt, for example MW-MGC-2026-00042." %}</p>
         <input id="phone-or-code" name="phone_or_code" type="text" autocomplete="off" required aria-describedby="lookup-hint" value="{{ request.POST.phone_or_code|default:'' }}">
       </div>
+      <div class="field-group">
+        <label for="tracking-code">{% translate "Tracking code (for date of birth or OTP lookup)" %}</label>
+        <input id="tracking-code" name="tracking_code" type="text" autocomplete="off" value="{{ request.POST.tracking_code|default:'' }}">
+      </div>
+      <div class="field-group">
+        <label for="date-of-birth">{% translate "Date of birth" %}</label>
+        <input id="date-of-birth" name="date_of_birth" type="date" value="{{ request.POST.date_of_birth|default:'' }}">
+      </div>
+      <div class="field-group">
+        <label for="otp-code">{% translate "One-time code" %}</label>
+        <input id="otp-code" name="otp_code" type="text" autocomplete="off" value="{{ request.POST.otp_code|default:'' }}">
+      </div>
       <button class="button button-primary button-large" type="submit"><span class="button-label">{% translate "Check status" %}</span><span class="button-progress" aria-hidden="true"></span></button>
+      <button class="button button-secondary" type="submit" name="action" value="request_otp">{% translate "Send one-time code" %}</button>
       <p class="privacy-note"><svg class="icon"><use href="#icon-warning"/></svg>{% translate "Your details are checked privately. We never show which detail did not match." %}</p>
     </form>
     <section class="help-panel" aria-labelledby="help-title">

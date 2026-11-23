@@ -4,6 +4,7 @@ from . import api, views
 urlpatterns = [
     path("", views.public_home, name="public_home"),
     path("status/", views.public_status, name="public_status"),
+    path("lookup/otp/", views.request_otp, name="request_otp"),
     path("language/", views.language_switch, name="language_switch"),
     path("ussd-demo/", views.ussd_demo, name="ussd_demo"),
     path("api/ussd/", api.UssdAPIView.as_view(), name="api_ussd"),

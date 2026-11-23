@@ -10,6 +10,7 @@ class RegisterApplicationForm(forms.Form):
     surname = forms.CharField(max_length=80, label="Surname")
     phone = forms.CharField(max_length=24, label="Phone number", help_text="Use +265 followed by 9 digits, or a local 09/08 number.")
     email = forms.EmailField(required=False, label="Email (optional)")
+    date_of_birth = forms.DateField(required=False, label="Date of birth (optional)")
     language = forms.ChoiceField(choices=[("en", "English"), ("ny", "Chichewa")], label="Preferred language")
     application_type = forms.ChoiceField(choices=[("new", "New passport"), ("renewal", "Renewal"), ("replacement", "Replacement")], label="Application type")
 

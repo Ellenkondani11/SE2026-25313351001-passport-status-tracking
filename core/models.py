@@ -43,6 +43,7 @@ class Applicant(models.Model):
     phone = models.CharField(max_length=24, validators=[RegexValidator(r"^\+265[0-9]{9}$", "Use an E.164 Malawi number, e.g. +265991234567.")])
     email = models.EmailField(blank=True)
     language = models.CharField(max_length=2, choices=LANGUAGE_CHOICES, default="en")
+    date_of_birth = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -192,6 +193,9 @@ class AuditLog(models.Model):
     details = models.JSONField(default=dict, blank=True)
     ip = models.GenericIPAddressField(null=True, blank=True)
     at = models.DateTimeField(default=timezone.now, db_index=True)
+    reason = models.CharField(max_length=240, blank=True)
+    prev_hash = models.CharField(max_length=64, blank=True, default="")
+    entry_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
     class Meta:
         ordering = ["-at", "-id"]
@@ -199,10 +203,27 @@ class AuditLog(models.Model):
     def save(self, *args, **kwargs):
         if self.pk and AuditLog.objects.filter(pk=self.pk).exists():
             raise ValueError("Audit log entries are immutable.")
+        if not self.pk:
+            from .audit_chain import compute_entry_hash
+            self.prev_hash, self.entry_hash = compute_entry_hash(self)
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
         raise ValueError("Audit log entries are immutable.")
+
+
+class LookupOtp(models.Model):
+    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name="lookup_otps")
+    code_hash = models.CharField(max_length=64)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"OTP for {self.application.tracking_code}"
 
 
 class LookupAttempt(models.Model):

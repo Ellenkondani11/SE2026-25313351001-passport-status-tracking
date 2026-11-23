@@ -21,6 +21,7 @@ class ApplicationCreateSerializer(serializers.Serializer):
     surname = serializers.CharField(max_length=80)
     phone = serializers.CharField(max_length=24)
     email = serializers.EmailField(required=False, allow_blank=True)
+    date_of_birth = serializers.DateField(required=False, allow_null=True)
     language = serializers.ChoiceField(choices=["en", "ny"], default="en")
     application_type = serializers.ChoiceField(choices=["new", "renewal", "replacement"], default="new")
 
@@ -102,7 +103,7 @@ class ApplicationCreateAPIView(APIView):
         data = serializer.validated_data
         with transaction.atomic():
             applicant, created = Applicant.objects.get_or_create(national_id=data["national_id"].strip().upper(), defaults={
-                "first_name": data["first_name"], "surname": data["surname"], "phone": data["phone"], "email": data.get("email", ""), "language": data["language"],
+                "first_name": data["first_name"], "surname": data["surname"], "phone": data["phone"], "email": data.get("email", ""), "language": data["language"], "date_of_birth": data.get("date_of_birth"),
             })
             if not created:
                 applicant.first_name = data["first_name"]
@@ -110,6 +111,7 @@ class ApplicationCreateAPIView(APIView):
                 applicant.phone = data["phone"]
                 applicant.email = data.get("email", "")
                 applicant.language = data["language"]
+                applicant.date_of_birth = data.get("date_of_birth")
                 applicant.save()
             stage = Stage.objects.get(key="received")
             app = Application.objects.create(tracking_code=tracking_code_for(office), applicant=applicant, office=office, application_type=data["application_type"], current_stage=stage)

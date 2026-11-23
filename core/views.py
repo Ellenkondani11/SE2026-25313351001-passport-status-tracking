@@ -47,44 +47,27 @@ def language_switch(request):
 
 
 def public_home(request):
-    error = ""
-    if request.method == "POST":
-        national_id = (request.POST.get("national_id") or "").strip().upper()
-        lookup_value = (request.POST.get("phone_or_code") or "").strip()
-        lang = request.POST.get("language")
-        if lang in ("en", "ny"):
-            translation.activate(lang)
-            request.session["django_language"] = lang
-        digest = hash_sensitive(national_id)
-        ip = client_ip(request)
-        cutoff = timezone.now() - timedelta(minutes=LOOKUP_WINDOW_MINUTES)
-        prior = LookupAttempt.objects.filter(national_id_hash=digest, at__gte=cutoff)
-        if ip:
-            prior = prior.filter(ip=ip)
-        locked = prior.count() >= LOOKUP_LIMIT
-        application = None
-        if not locked and national_id and lookup_value:
-            candidates = Application.objects.filter(applicant__national_id__iexact=national_id).select_related("applicant", "office", "current_stage")
-            code = lookup_value.upper().replace(" ", "")
-            phone = normalize_phone(lookup_value)
-            if code.startswith("MW-"):
-                application = candidates.filter(tracking_code__iexact=code).order_by("-received_at").first()
-            if not application and phone:
-                application = candidates.filter(applicant__phone=phone).order_by("-updated_at").first()
-        success = application is not None and not locked
-        LookupAttempt.objects.create(national_id_hash=digest, ip=ip, success=success)
-        audit(request, "public_lookup", application, {"success": bool(success), "national_id_hash": digest})
-        if success:
-            request.session["verified_status_code"] = application.tracking_code
-            request.session["verified_status_at"] = timezone.now().isoformat()
-            return redirect(f"/status/?code={application.tracking_code}")
-        error = _("We could not match those details. Check what you entered or contact Mangochi office.")
-    return render(request, "core/public_home.html", {"error": error})
+    from .lookup import public_home as _public_home
+    return _public_home(request)
 
 
 def public_status(request):
     code = (request.GET.get("code") or "").strip().upper()
     allowed = request.session.get("verified_status_code") == code and bool(code)
+    if allowed:
+        verified_at = request.session.get("verified_status_at")
+        parsed = None
+        if verified_at:
+            try:
+                parsed = timezone.datetime.fromisoformat(str(verified_at))
+                if timezone.is_naive(parsed):
+                    parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+            except ValueError:
+                parsed = None
+        if parsed is not None and (timezone.now() - parsed).total_seconds() > 15 * 60:
+            allowed = False
+            request.session.pop("verified_status_code", None)
+            request.session.pop("verified_status_at", None)
     if not allowed:
         return render(request, "core/status_denied.html", status=403)
     application = get_object_or_404(
@@ -115,6 +98,11 @@ def public_status(request):
         "timeline": changes,
     }
     return render(request, "core/public_status.html", context)
+
+
+def request_otp(request):
+    from .lookup import request_otp as _request_otp
+    return _request_otp(request)
 
 
 def ussd_demo(request):
@@ -247,7 +235,7 @@ def register_application(request):
         with transaction.atomic():
             applicant, created = Applicant.objects.get_or_create(
                 national_id=data["national_id"],
-                defaults={key: data[key] for key in ("first_name", "surname", "phone", "email", "language")},
+                defaults={key: data[key] for key in ("first_name", "surname", "phone", "email", "language", "date_of_birth")},
             )
             if not created:
                 applicant.first_name = data["first_name"]
@@ -255,6 +243,7 @@ def register_application(request):
                 applicant.phone = data["phone"]
                 applicant.email = data["email"]
                 applicant.language = data["language"]
+                applicant.date_of_birth = data.get("date_of_birth")
                 applicant.save()
             received = Stage.objects.get(key="received")
             application = Application.objects.create(
@@ -625,12 +614,18 @@ def admin_console(request):
 
 @role_required("officer", "supervisor", "admin")
 def audit_log(request):
+    from .audit_chain import verify_audit_chain
     qs = AuditLog.objects.select_related("user")
     action = request.GET.get("action", "")
     if action:
         qs = qs.filter(action__icontains=action)
     page_obj = Paginator(qs, 50).get_page(request.GET.get("page"))
-    return render(request, "core/audit_log.html", {"page_obj": page_obj, "entries": page_obj.object_list, "action_filter": action})
+    intact, count, tampered = verify_audit_chain()
+    return render(request, "core/audit_log.html", {
+        "page_obj": page_obj, "entries": page_obj.object_list, "action_filter": action,
+        "audit_chain_ok": intact, "audit_chain_count": count, "audit_tampered": tampered,
+        "audit_badge": "Verified" if intact else "Tamper alert",
+    })
 
 
 @role_required("officer", "supervisor", "admin")
