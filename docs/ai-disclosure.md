@@ -25,5 +25,11 @@
 - No changes to `core/*.py`; documentation-only edits plus new doc/diagram files.
 - Metrics preserved: 6 initial tests (52% coverage) -> 24 characterisation tests (71% coverage); lizard 1,535 NLOC, avg CCN 5.0, 7 warnings; bandit 0 High / 0 Medium / 6 Low (B311); flake8 111 lint issues.
 
-## 4. Human Oversight
+## 4. Implementation Update (2026-11-23)
+- Implemented Signature Challenge #3 (private lookup via tracking code + DOB or 6-digit OTP, IP/identifier rate limits, 15-minute session TTL) in `core/lookup.py`, `core/models.py`, `core/forms.py`, `core/api.py`, templates, and `core/urls.py`.
+- Implemented Signature Challenge #4 (tamper-evident hash-chained `AuditLog` with `reason`, `prev_hash`, `entry_hash`, `verify_audit_chain()`, `verify_audit` command, and audit-log integrity badge) in `core/audit_chain.py`, `core/models.py`, `core/utils.py`, `core/views.py`, and `core/templates/core/audit_log.html`.
+- Added `tests/test_signature_challenge.py` (13 tests); full suite now 37 passing.
+- Quality checks: `makemigrations --check --dry-run` reports no changes; lizard reports no new function with CCN > 10 or length > 40; bandit reports 0 High / 0 Medium / 6 Low.
+
+## 5. Human Oversight
 All generated documentation was reviewed for consistency with the as-built baseline and the Signature Challenge gap analysis before being committed to the working tree. Final approval rests with the student (Ellen Kondani, 25313351001).
