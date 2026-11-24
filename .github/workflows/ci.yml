@@ -1,3 +1,4 @@
+# Token: EK01-HAZY-VM26 | Student: 25313351001
 name: CI
 
 on:
@@ -29,5 +30,7 @@ jobs:
         run: python manage.py verify_slices
       - name: Complexity check
         run: lizard core/api.py core/audit_chain.py core/channels.py core/lookup.py core/services.py core/views.py --CCN 10 --length 40
+      - name: Lint
+        run: flake8
       - name: Security scan
         run: bandit -r core -x core/migrations -ll

@@ -44,7 +44,10 @@ class AfricasTalkingGateway(NotificationGateway):
             recipients = payload.get("SMSMessageData", {}).get("Recipients", [])
             if recipients and recipients[0].get("statusCode") in (100, 101, 102):
                 return GatewayResult("sent", provider_ref=recipients[0].get("messageId", ""))
-            detail = recipients[0].get("status", "Provider did not accept the message") if recipients else "Provider returned no recipient result"
+            detail = (
+                recipients[0].get("status", "Provider did not accept the message")
+                if recipients else "Provider returned no recipient result"
+            )
             return GatewayResult("failed", error=str(detail))
         except (requests.RequestException, ValueError) as exc:
             return GatewayResult("failed", error=str(exc)[:500])

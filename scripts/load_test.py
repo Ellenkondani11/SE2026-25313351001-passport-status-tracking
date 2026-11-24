@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 import argparse
 import concurrent.futures
-import statistics
+import http.cookiejar
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -20,36 +21,6 @@ def percentile(values, pct):
     return ordered[lower] * (1 - weight) + ordered[upper] * weight
 
 
-def fetch(url, data=None, headers=None, timeout=30):
-    encoded = urllib.parse.urlencode(data).encode() if data is not None else None
-    request = urllib.request.Request(url, data=encoded, headers=headers or {})
-    start = time.perf_counter()
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read()
-            status = response.status
-    except urllib.error.HTTPError as exc:
-        body = exc.read()
-        status = exc.code
-    except Exception as exc:  # noqa: BLE001
-        body = str(exc).encode()
-        status = 0
-    elapsed_ms = (time.perf_counter() - start) * 1000.0
-    return status, body, elapsed_ms
-
-
-def worker_lookup(base_url, national_id, phone):
-    session = None
-    # Obtain CSRF token first.
-    status, body, _ = fetch(base_url + "/")
-    cookies = {}
-    # urllib does not persist cookies automatically; parse Set-Cookie manually.
-    # Simpler: use a cookie header from the first response is not available here,
-    # so perform token extraction from body is not needed; Django test-style CSRF
-    # is handled by sending the token parsed from the cookie jar via http.cookiejar.
-    return status, 0.0
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
@@ -59,61 +30,10 @@ def main():
     parser.add_argument("--tracking-code", required=True)
     args = parser.parse_args()
 
-    import http.cookiejar
-    import urllib.request as request_mod
-
-    cj = http.cookiejar.CookieJar()
-    opener = request_mod.build_opener(request_mod.HTTPCookieProcessor(cj))
-
-    def one(i):
-        jar = http.cookiejar.CookieJar()
-        op = request_mod.build_opener(request_mod.HTTPCookieProcessor(jar))
-        # GET home for CSRF cookie
-        req = request_mod.Request(args.base_url + "/")
-        t0 = time.perf_counter()
-        try:
-            with op.open(req, timeout=30) as resp:
-                html = resp.read().decode("utf-8", "ignore")
-        except Exception as exc:  # noqa: BLE001
-            return 0, (time.perf_counter() - t0) * 1000.0, "get_error"
-        # extract csrf token
-        token = ""
-        for cookie in jar:
-            if cookie.name == "csrftoken":
-                token = cookie.value
-        data = urllib.parse.urlencode({
-            "national_id": args.national_id,
-            "phone_or_code": args.phone,
-            "csrfmiddlewaretoken": token,
-        }).encode()
-        req2 = request_mod.Request(args.base_url + "/", data=data, headers={"X-CSRFToken": token})
-        for cookie in jar:
-            req2.add_unredirected_header("Cookie", f"{cookie.name}={cookie.value}")
-        t1 = time.perf_counter()
-        try:
-            with op.open(req2, timeout=30) as resp:
-                status = resp.status
-                body = resp.read().decode("utf-8", "ignore")
-        except urllib.error.HTTPError as exc:
-            status = exc.code
-            body = exc.read().decode("utf-8", "ignore")
-        except Exception as exc:  # noqa: BLE001
-            status = 0
-            body = str(exc)
-        elapsed = (time.perf_counter() - t1) * 1000.0
-        outcome = "success" if status == 302 else ("rate_limited" if "could not match" in body.lower() or status == 200 else "other")
-        return status, elapsed, outcome
-
-    # Phase 1: establish a session via one successful lookup (main thread).
     cj = http.cookiejar.CookieJar()
     op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-    data = urllib.parse.urlencode({
-        "national_id": args.national_id,
-        "phone_or_code": args.phone,
-    }).encode()
-    # GET home for CSRF
     with op.open(args.base_url + "/", timeout=30) as resp:
-        html = resp.read().decode("utf-8", "ignore")
+        resp.read()
     token = ""
     for cookie in cj:
         if cookie.name == "csrftoken":
@@ -123,7 +43,10 @@ def main():
         "phone_or_code": args.phone,
         "csrfmiddlewaretoken": token,
     }).encode()
-    req = urllib.request.Request(args.base_url + "/", data=data, headers={"X-CSRFToken": token, "Referer": args.base_url + "/"})
+    req = urllib.request.Request(
+        args.base_url + "/", data=data,
+        headers={"X-CSRFToken": token, "Referer": args.base_url + "/"},
+    )
     for cookie in cj:
         req.add_unredirected_header("Cookie", f"{cookie.name}={cookie.value}")
     with op.open(req, timeout=30) as resp:
@@ -144,10 +67,13 @@ def main():
                 token2 = cookie.value
         data2 = urllib.parse.urlencode({
             "national_id": args.national_id,
-            "phone_or_code": "0000000000",  # wrong credential to exercise failure path
+            "phone_or_code": "0000000000",
             "csrfmiddlewaretoken": token2,
         }).encode()
-        req2 = urllib.request.Request(args.base_url + "/", data=data2, headers={"X-CSRFToken": token2, "Referer": args.base_url + "/"})
+        req2 = urllib.request.Request(
+            args.base_url + "/", data=data2,
+            headers={"X-CSRFToken": token2, "Referer": args.base_url + "/"},
+        )
         for cookie in jar:
             req2.add_unredirected_header("Cookie", f"{cookie.name}={cookie.value}")
         t = time.perf_counter()
@@ -158,16 +84,20 @@ def main():
         except urllib.error.HTTPError as exc:
             status = exc.code
             body = exc.read().decode("utf-8", "ignore")
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             status = 0
-            body = str(exc)
+            body = ""
         elapsed = (time.perf_counter() - t) * 1000.0
-        outcome = "success" if args.tracking_code in body else ("rate_limited" if "could not match" in body.lower() else "other")
+        outcome = "success" if args.tracking_code in body else (
+            "rate_limited" if "could not match" in body.lower() else "other"
+        )
         return status, elapsed, outcome
 
     def one_status(i):
-        req = urllib.request.Request(args.base_url + f"/status/?code={args.tracking_code}",
-                                    headers={"Cookie": session_cookies})
+        req = urllib.request.Request(
+            args.base_url + f"/status/?code={args.tracking_code}",
+            headers={"Cookie": session_cookies},
+        )
         t = time.perf_counter()
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -176,9 +106,9 @@ def main():
         except urllib.error.HTTPError as exc:
             status = exc.code
             body = exc.read().decode("utf-8", "ignore")
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             status = 0
-            body = str(exc)
+            body = ""
         elapsed = (time.perf_counter() - t) * 1000.0
         outcome = "success" if status == 200 and "Under review" in body else "other"
         return status, elapsed, outcome
@@ -202,8 +132,8 @@ def main():
         print(f"concurrency={args.concurrency}")
         print(f"total_time_s={total_time:.3f}")
         print(f"throughput_rps={len(latencies)/total_time:.2f}")
-        for k, v in outcomes.items():
-            print(f"{k}={v}")
+        for key, value in outcomes.items():
+            print(f"{key}={value}")
         print(f"p50_ms={p50:.2f}")
         print(f"p95_ms={p95:.2f}")
         print(f"p99_ms={p99:.2f}")

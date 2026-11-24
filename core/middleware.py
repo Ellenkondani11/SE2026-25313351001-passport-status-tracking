@@ -26,6 +26,14 @@ class QueryLanguageMiddleware(MiddlewareMixin):
         return response
 
 
+class SessionTouchMiddleware(MiddlewareMixin):
+    """Save the session for authenticated users to preserve idle timeout."""
+
+    def process_request(self, request):
+        if getattr(request, "user", None) and getattr(request.user, "is_authenticated", False):
+            request.session.modified = True
+
+
 class PartitionedMorsel(Morsel):
     """Cookie serializer extension for Partitioned, supported by modern browsers."""
     def OutputString(self, attrs=None):

@@ -11,7 +11,10 @@ class Command(BaseCommand):
     help = "Run the three PassTrack vertical slices end to end."
 
     def add_arguments(self, parser):
-        parser.add_argument("--demo", action="store_true", help="Use existing demo data instead of a temporary dataset.")
+        parser.add_argument(
+            "--demo", action="store_true",
+            help="Use existing demo data instead of a temporary dataset.",
+        )
 
     def handle(self, *args, **options):
         results = []
@@ -35,16 +38,38 @@ class Command(BaseCommand):
             if ok:
                 self.stdout.write(self.style.SUCCESS(f"{name}: PASS"))
             else:
-                self.stdout.write(self.style.ERROR(f"{name}: FAIL"))
+                self.stdout.write(
+                    self.style.ERROR(f"{name}: FAIL")
+                )
         if not all(ok for _, ok in results):
             raise CommandError("One or more vertical slices failed.")
 
     def _seed(self):
-        office, _ = Office.objects.get_or_create(code="VSL", defaults={"name": "Vertical Slice Office", "district": "Mangochi"})
-        stage_received, _ = Stage.objects.get_or_create(key="vs_received", defaults={"order": 10, "name": "Received", "applicant_text_en": "Received.", "applicant_text_ny": "Lalandiridwa.", "notify": True})
-        stage_review, _ = Stage.objects.get_or_create(key="vs_under_review", defaults={"order": 20, "name": "Under review", "applicant_text_en": "Under review.", "applicant_text_ny": "Likuwunikidwa.", "notify": True})
-        applicant, _ = Applicant.objects.get_or_create(national_id="9999999999999", defaults={"first_name": "Slice", "surname": "Tester", "phone": "+265991234567"})
-        application, _ = Application.objects.get_or_create(tracking_code="MW-VSL-2026-00001", defaults={"applicant": applicant, "office": office, "current_stage": stage_received})
+        office, _ = Office.objects.get_or_create(
+            code="VSL", defaults={"name": "Vertical Slice Office", "district": "Mangochi"},
+        )
+        stage_received, _ = Stage.objects.get_or_create(
+            key="vs_received",
+            defaults={
+                "order": 10, "name": "Received", "applicant_text_en": "Received.",
+                "applicant_text_ny": "Lalandiridwa.", "notify": True,
+            },
+        )
+        stage_review, _ = Stage.objects.get_or_create(
+            key="vs_under_review",
+            defaults={
+                "order": 20, "name": "Under review", "applicant_text_en": "Under review.",
+                "applicant_text_ny": "Likuwunikidwa.", "notify": True,
+            },
+        )
+        applicant, _ = Applicant.objects.get_or_create(
+            national_id="9999999999999",
+            defaults={"first_name": "Slice", "surname": "Tester", "phone": "+265991234567"},
+        )
+        application, _ = Application.objects.get_or_create(
+            tracking_code="MW-VSL-2026-00001",
+            defaults={"applicant": applicant, "office": office, "current_stage": stage_received},
+        )
         user, created = User.objects.get_or_create(username="vs_officer", defaults={"is_active": True})
         if created:
             user.set_password("long-enough-test-pass")
@@ -74,11 +99,19 @@ class Command(BaseCommand):
         from django.test import Client
         c = Client()
         # callback without auth token allowed when SMS_CALLBACK_TOKEN empty (default test env)
-        response = c.post("/api/sms/delivery/", {"provider_ref": "vs-ref-1", "status": "Delivered"}, content_type="application/json")
+        response = c.post(
+            "/api/sms/delivery/",
+            {"provider_ref": "vs-ref-1", "status": "Delivered"},
+            content_type="application/json",
+        )
         row.refresh_from_db()
         return response.status_code == 200 and row.status == "delivered"
 
     def _vs3(self, client, application):
-        response = client.post("/api/ussd/", {"sessionId": "vs-session", "phoneNumber": "+265991234567", "text": f"1*{application.applicant.national_id}*{application.tracking_code}"})
+        response = client.post(
+            "/api/ussd/",
+            {"sessionId": "vs-session", "phoneNumber": "+265991234567",
+             "text": f"1*{application.applicant.national_id}*{application.tracking_code}"},
+        )
         body = response.content.decode()
         return response.status_code == 200 and "Under review" in body and len(body) <= 160

@@ -251,12 +251,21 @@ class LookupAttempt(models.Model):
     success = models.BooleanField(default=False)
     at = models.DateTimeField(default=timezone.now, db_index=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["national_id_hash", "at"]),
+            models.Index(fields=["ip", "at"]),
+        ]
+
 
 class LoginAttempt(models.Model):
     username_hash = models.CharField(max_length=64, db_index=True)
     ip = models.GenericIPAddressField(null=True, blank=True, db_index=True)
     success = models.BooleanField(default=False)
     at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["username_hash", "at"])]
 
 
 def hash_sensitive(value):

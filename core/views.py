@@ -34,7 +34,9 @@ def language_switch(request):
         code = "en"
     translation.activate(code)
     next_url = request.GET.get("next") or "/"
-    if not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+    if not url_has_allowed_host_and_scheme(
+        next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure(),
+    ):
         next_url = "/"
     response = redirect(next_url)
     response.set_cookie("django_language", code, max_age=60 * 60 * 24 * 365, samesite="Lax")
@@ -47,31 +49,30 @@ def public_home(request):
     return _public_home(request)
 
 
-def public_status(request):
-    code = (request.GET.get("code") or "").strip().upper()
-    allowed = request.session.get("verified_status_code") == code and bool(code)
-    if allowed:
-        verified_at = request.session.get("verified_status_at")
-        parsed = None
-        if verified_at:
-            try:
-                parsed = timezone.datetime.fromisoformat(str(verified_at))
-                if timezone.is_naive(parsed):
-                    parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
-            except ValueError:
-                parsed = None
-        if parsed is not None and (timezone.now() - parsed).total_seconds() > 15 * 60:
-            allowed = False
-            request.session.pop("verified_status_code", None)
-            request.session.pop("verified_status_at", None)
-    if not allowed:
-        return render(request, "core/status_denied.html", status=403)
-    application = get_object_or_404(
-        Application.objects.select_related("applicant", "office", "current_stage").prefetch_related("notifications"),
-        tracking_code__iexact=code,
-    )
-    language = public_language(request)
-    changes = list(application.stage_changes.select_related("from_stage", "to_stage", "by_user").order_by("at"))
+def _parse_verified_at(value):
+    if not value:
+        return None
+    try:
+        parsed = timezone.datetime.fromisoformat(str(value))
+        if timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+        return parsed
+    except ValueError:
+        return None
+
+
+def _public_status_session_allowed(request, code):
+    if not code or request.session.get("verified_status_code") != code:
+        return False
+    parsed = _parse_verified_at(request.session.get("verified_status_at"))
+    if parsed is None or (timezone.now() - parsed).total_seconds() <= LOOKUP_WINDOW_MINUTES * 60:
+        return True
+    request.session.pop("verified_status_code", None)
+    request.session.pop("verified_status_at", None)
+    return False
+
+
+def _public_status_histories(application, language):
     notification_rows = application.notifications.order_by("-created_at")[:20]
     with translation.override(language):
         template_labels = {key: _(label) for key, label in {
@@ -79,17 +80,34 @@ def public_status(request):
             "printed": "Printed", "ready": "Ready for collection", "collected": "Collected",
             "on_hold": "On hold", "rejected": "Rejected",
         }.items()}
-        histories = [{
+        return [{
             "row": n,
             "label": template_labels.get(n.template_key, n.template_key),
-            "destination": mask_phone(n.to) if n.channel == "sms" else (n.to[:2] + "•••" + n.to[n.to.find("@"):] if "@" in n.to else "••••"),
+            "destination": mask_phone(n.to) if n.channel == "sms" else (
+                n.to[:2] + "..." + n.to[n.to.find("@"):] if "@" in n.to else "...."
+            ),
         } for n in notification_rows]
+
+
+def public_status(request):
+    code = (request.GET.get("code") or "").strip().upper()
+    if not _public_status_session_allowed(request, code):
+        return render(request, "core/status_denied.html", status=403)
+    application = get_object_or_404(
+        Application.objects.select_related("applicant", "office", "current_stage").prefetch_related("notifications"),
+        tracking_code__iexact=code,
+    )
+    language = public_language(request)
+    changes = list(application.stage_changes.select_related("from_stage", "to_stage", "by_user").order_by("at"))
+    histories = _public_status_histories(application, language)
     context = {
         "application": application,
         "language": language,
         "stage_text": application.current_stage.applicant_text(language),
         "collection_hours": application.office.collection_hours_for(language),
-        "stage_steps": list(Stage.objects.filter(key__in=["received", "under_review", "approved", "printed", "ready"]).order_by("order")),
+        "stage_steps": list(Stage.objects.filter(
+            key__in=["received", "under_review", "approved", "printed", "ready"],
+        ).order_by("order")),
         "histories": histories,
         "timeline": changes,
     }
@@ -105,38 +123,48 @@ def ussd_demo(request):
     return render(request, "core/ussd_demo.html", {"simulator": "public"})
 
 
-@require_http_methods(["GET", "POST"])
+def _officer_login_is_locked(user_hash, ip):
+    cutoff = timezone.now() - timedelta(minutes=15)
+    failures = LoginAttempt.objects.filter(username_hash=user_hash, success=False, at__gte=cutoff)
+    if ip:
+        failures = failures.filter(ip=ip)
+    return failures.count() >= 5
+
+
+def _officer_login_handle_post(request):
+    username = (request.POST.get("username") or "").strip()
+    password = request.POST.get("password") or ""
+    ip = client_ip(request)
+    user_hash = hash_sensitive(username)
+    if _officer_login_is_locked(user_hash, ip):
+        audit(request, "login_locked", details={"username_hash": user_hash, "success": False})
+        return _("Sign-in is temporarily locked. Try again in 15 minutes.")
+    user = authenticate(request, username=username, password=password)
+    ok = bool(user and user.is_active)
+    LoginAttempt.objects.create(username_hash=user_hash, ip=ip, success=ok)
+    if not ok:
+        audit(request, "login_failed", details={"username_hash": user_hash, "success": False})
+        return _("Sign-in details do not match.")
+    login(request, user)
+    request.session.set_expiry(1800)
+    audit(request, "login", user, {"username": user.get_username()})
+    next_url = request.GET.get("next") or "/officer/"
+    if not url_has_allowed_host_and_scheme(
+        next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure(),
+    ):
+        next_url = "/officer/"
+    return redirect(next_url)
+
+
 def officer_login(request):
     if request.user.is_authenticated:
         return redirect("officer_home")
     error = ""
     if request.method == "POST":
-        username = (request.POST.get("username") or "").strip()
-        password = request.POST.get("password") or ""
-        ip = client_ip(request)
-        user_hash = hash_sensitive(username)
-        cutoff = timezone.now() - timedelta(minutes=15)
-        failures = LoginAttempt.objects.filter(username_hash=user_hash, success=False, at__gte=cutoff)
-        if ip:
-            failures = failures.filter(ip=ip)
-        if failures.count() >= 5:
-            audit(request, "login_locked", details={"username_hash": user_hash, "success": False})
-            error = _("Sign-in is temporarily locked. Try again in 15 minutes.")
-        else:
-            user = authenticate(request, username=username, password=password)
-            ok = bool(user and user.is_active)
-            LoginAttempt.objects.create(username_hash=user_hash, ip=ip, success=ok)
-            if not ok:
-                audit(request, "login_failed", details={"username_hash": user_hash, "success": False})
-            if ok:
-                login(request, user)
-                request.session.set_expiry(1800)
-                audit(request, "login", user, {"username": user.get_username()})
-                next_url = request.GET.get("next") or "/officer/"
-                if not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
-                    next_url = "/officer/"
-                return redirect(next_url)
-            error = _("Sign-in details do not match.")
+        result = _officer_login_handle_post(request)
+        if hasattr(result, "status_code"):
+            return result
+        error = result
     return render(request, "core/login.html", {"error": error})
 
 
@@ -218,6 +246,24 @@ def officer_home(request):
     })
 
 
+def _register_applicant(data):
+    applicant, created = Applicant.objects.get_or_create(
+        national_id=data["national_id"],
+        defaults={
+            key: data[key] for key in ("first_name", "surname", "phone", "email", "language", "date_of_birth")
+        },
+    )
+    if not created:
+        applicant.first_name = data["first_name"]
+        applicant.surname = data["surname"]
+        applicant.phone = data["phone"]
+        applicant.email = data["email"]
+        applicant.language = data["language"]
+        applicant.date_of_birth = data.get("date_of_birth")
+        applicant.save()
+    return applicant
+
+
 @role_required("officer", "supervisor", "admin")
 @require_http_methods(["GET", "POST"])
 def register_application(request):
@@ -229,29 +275,24 @@ def register_application(request):
             return redirect("officer_home")
         data = form.cleaned_data
         with transaction.atomic():
-            applicant, created = Applicant.objects.get_or_create(
-                national_id=data["national_id"],
-                defaults={key: data[key] for key in ("first_name", "surname", "phone", "email", "language", "date_of_birth")},
-            )
-            if not created:
-                applicant.first_name = data["first_name"]
-                applicant.surname = data["surname"]
-                applicant.phone = data["phone"]
-                applicant.email = data["email"]
-                applicant.language = data["language"]
-                applicant.date_of_birth = data.get("date_of_birth")
-                applicant.save()
+            applicant = _register_applicant(data)
             received = Stage.objects.get(key="received")
             application = Application.objects.create(
                 tracking_code=tracking_code_for(office), applicant=applicant, office=office,
                 application_type=data["application_type"], current_stage=received,
             )
-            StageChange.objects.create(application=application, from_stage=None, to_stage=received, by_user=request.user, reason="Application registered")
+            StageChange.objects.create(
+                application=application, from_stage=None, to_stage=received,
+                by_user=request.user, reason="Application registered",
+            )
             audit(request, "application_registered", application, {"stage": received.key})
             notification = notify_stage(application, received, actor=request.user, ip=client_ip(request))
         if notification and notification.status == "failed":
             messages.warning(request, "Application registered; the SMS failed and is available in the outbox.")
-        return render(request, "core/registration_complete.html", {"application": application, "notification": notification})
+        return render(
+            request, "core/registration_complete.html",
+            {"application": application, "notification": notification},
+        )
     return render(request, "core/register.html", {"form": form})
 
 
@@ -261,7 +302,9 @@ def _handle_advance(request, application):
     if not next_stage:
         messages.error(request, "This application has no next stage to advance to.")
         return
-    transition_application_stage(application, next_stage, actor=request.user, reason="Advanced one stage", ip=client_ip(request))
+    transition_application_stage(
+        application, next_stage, actor=request.user, reason="Advanced one stage", ip=client_ip(request),
+    )
     messages.success(request, f"Advanced to {next_stage.name}.")
 
 
@@ -285,7 +328,10 @@ def _handle_hold(request, application):
         messages.error(request, "Enter a reason for putting this application on hold.")
         return
     hold_stage = Stage.objects.get(key="on_hold")
-    transition_application_stage(application, hold_stage, actor=request.user, reason=reason, new_status="on_hold", ip=client_ip(request))
+    transition_application_stage(
+        application, hold_stage, actor=request.user, reason=reason,
+        new_status="on_hold", ip=client_ip(request),
+    )
     messages.success(request, "Application put on hold.")
 
 
@@ -296,7 +342,10 @@ def _handle_resume(request, application):
     prior = application.previous_stage
     if prior is None:
         prior = Stage.objects.get(key="received")
-    transition_application_stage(application, prior, actor=request.user, reason="Resumed from hold", new_status="active", ip=client_ip(request))
+    transition_application_stage(
+        application, prior, actor=request.user, reason="Resumed from hold",
+        new_status="active", ip=client_ip(request),
+    )
     messages.success(request, "Application resumed.")
 
 
@@ -306,7 +355,10 @@ def _handle_collect(request, application):
         messages.error(request, "Only a supervisor can mark an application collected before it is ready.")
         return
     reason = request.POST.get("reason") or "Passport collected"
-    transition_application_stage(application, stages["collected"], actor=request.user, reason=reason, new_status="collected", ip=client_ip(request))
+    transition_application_stage(
+        application, stages["collected"], actor=request.user, reason=reason,
+        new_status="collected", ip=client_ip(request),
+    )
     messages.success(request, "Application marked as collected.")
 
 
@@ -316,7 +368,10 @@ def _handle_reject(request, application):
     if request.user.profile.role not in ("supervisor", "admin") or not reason:
         messages.error(request, "A supervisor and a reason are required to reject an application.")
         return
-    transition_application_stage(application, stages["rejected"], actor=request.user, reason=reason, new_status="rejected", ip=client_ip(request))
+    transition_application_stage(
+        application, stages["rejected"], actor=request.user, reason=reason,
+        new_status="rejected", ip=client_ip(request),
+    )
     messages.success(request, "Application marked as rejected.")
 
 
@@ -385,10 +440,14 @@ def application_detail(request, code):
     timeline_items.sort(key=lambda item: item["at"], reverse=True)
     return render(request, "core/application_detail.html", {
         "application": application,
-        "stage_steps": list(Stage.objects.filter(key__in=["received", "under_review", "approved", "printed", "ready"]).order_by("order")),
+        "stage_steps": list(Stage.objects.filter(
+            key__in=["received", "under_review", "approved", "printed", "ready"],
+        ).order_by("order")),
         "timeline_items": timeline_items,
         "stages": Stage.objects.all(),
-        "correction_form": ContactCorrectionForm(initial={"phone": application.applicant.phone, "email": application.applicant.email}),
+        "correction_form": ContactCorrectionForm(
+            initial={"phone": application.applicant.phone, "email": application.applicant.email},
+        ),
     })
 
 
@@ -443,15 +502,24 @@ def _applications_csv(queryset):
     response["Content-Disposition"] = 'attachment; filename="pastns-applications.csv"'
     response.write("\ufeff")
     writer = csv.writer(response)
-    writer.writerow(["Tracking code", "Applicant", "National ID", "Phone", "Type", "Stage", "Status", "Received", "Office"])
+    writer.writerow([
+        "Tracking code", "Applicant", "National ID", "Phone", "Type", "Stage", "Status", "Received", "Office",
+    ])
     for app in queryset.select_related("applicant", "office", "current_stage"):
-        writer.writerow([_csv_safe(app.tracking_code), _csv_safe(f"{app.applicant.first_name} {app.applicant.surname}"), _csv_safe(mask_national_id(app.applicant.national_id)), _csv_safe(mask_phone(app.applicant.phone)), _csv_safe(app.get_application_type_display()), _csv_safe(app.current_stage.name), _csv_safe(app.get_status_display()), app.received_at.isoformat(), _csv_safe(app.office.name)])
+        writer.writerow([
+            _csv_safe(app.tracking_code), _csv_safe(f"{app.applicant.first_name} {app.applicant.surname}"),
+            _csv_safe(mask_national_id(app.applicant.national_id)), _csv_safe(mask_phone(app.applicant.phone)),
+            _csv_safe(app.get_application_type_display()), _csv_safe(app.current_stage.name),
+            _csv_safe(app.get_status_display()), app.received_at.isoformat(), _csv_safe(app.office.name),
+        ])
     return response
 
 
 @role_required("officer", "supervisor", "admin")
 def notification_outbox(request):
-    qs = Notification.objects.filter(application__in=office_queryset(request)).select_related("application", "application__applicant", "application__office")
+    qs = Notification.objects.filter(
+        application__in=office_queryset(request)
+    ).select_related("application", "application__applicant", "application__office")
     status_filter = request.GET.get("status", "")
     if status_filter:
         qs = qs.filter(status=status_filter)
@@ -462,45 +530,63 @@ def notification_outbox(request):
         messages.success(request, f"Message retried: {row.get_status_display()}.")
         return redirect("notification_outbox")
     page_obj = Paginator(qs.order_by("-created_at"), 50).get_page(request.GET.get("page"))
-    return render(request, "core/outbox.html", {"page_obj": page_obj, "notifications": page_obj.object_list, "status_filter": status_filter})
+    return render(
+        request, "core/outbox.html",
+        {"page_obj": page_obj, "notifications": page_obj.object_list, "status_filter": status_filter},
+    )
+
+
+@role_required("supervisor", "admin")
+def _reports_export(request, apps):
+    kind = request.GET.get("export")
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="pastns-{kind}.csv"'
+    writer = csv.writer(response)
+    if kind == "monthly":
+        writer.writerow(["Month", "Applications"])
+        for row in _monthly_counts(apps):
+            writer.writerow([row["label"], row["count"]])
+    elif kind == "delivery":
+        writer.writerow(["Status", "Count"])
+        notifications = Notification.objects.filter(application__in=apps)
+        for status, label in Notification.STATUS_CHOICES:
+            writer.writerow([label, notifications.filter(status=status).count()])
+    else:
+        writer.writerow(["Stage", "Applications", "Average days in stage"])
+        for row in _stage_metrics(apps):
+            writer.writerow([row["stage"].name, row["count"], row["average_days"]])
+    return response
+
+
+def _reports_chart_bars(monthly):
+    max_count = max([r["count"] for r in monthly] or [1]) or 1
+    chart_bars = []
+    for i, row in enumerate(monthly):
+        height = int((row["count"] / max_count) * 110)
+        chart_bars.append({
+            "x": 58 + i * 76, "y": 145 - height, "height": height,
+            "label": row["short"], "count": row["count"],
+        })
+    return chart_bars
 
 
 @role_required("supervisor", "admin")
 def reports(request):
     apps = office_queryset(request)
     if request.GET.get("export"):
-        kind = request.GET.get("export")
-        response = HttpResponse(content_type="text/csv; charset=utf-8")
-        response["Content-Disposition"] = f'attachment; filename="pastns-{kind}.csv"'
-        writer = csv.writer(response)
-        if kind == "monthly":
-            writer.writerow(["Month", "Applications"])
-            for row in _monthly_counts(apps):
-                writer.writerow([row["label"], row["count"]])
-        elif kind == "delivery":
-            writer.writerow(["Status", "Count"])
-            notifications = Notification.objects.filter(application__in=apps)
-            for status, label in Notification.STATUS_CHOICES:
-                writer.writerow([label, notifications.filter(status=status).count()])
-        else:
-            writer.writerow(["Stage", "Applications", "Average days in stage"])
-            for row in _stage_metrics(apps):
-                writer.writerow([row["stage"].name, row["count"], row["average_days"]])
-        return response
+        return _reports_export(request, apps)
     stage_metrics = _stage_metrics(apps)
     monthly = _monthly_counts(apps)
-    max_count = max([r["count"] for r in monthly] or [1]) or 1
-    chart_bars = []
-    for i, row in enumerate(monthly):
-        height = int((row["count"] / max_count) * 110)
-        chart_bars.append({"x": 58 + i * 76, "y": 145 - height, "height": height, "label": row["short"], "count": row["count"]})
+    chart_bars = _reports_chart_bars(monthly)
     notifications = Notification.objects.filter(application__in=apps)
     total_notifications = notifications.count()
     successful = notifications.filter(status__in=["sent", "delivered"]).count()
     delivery_rate = round(successful * 100 / total_notifications) if total_notifications else 0
-    context = {"stage_metrics": stage_metrics, "monthly": monthly, "chart_bars": chart_bars,
-               "delivery_rate": delivery_rate, "total_notifications": total_notifications,
-               "successful_notifications": successful, "application_count": apps.count()}
+    context = {
+        "stage_metrics": stage_metrics, "monthly": monthly, "chart_bars": chart_bars,
+        "delivery_rate": delivery_rate, "total_notifications": total_notifications,
+        "successful_notifications": successful, "application_count": apps.count(),
+    }
     return render(request, "core/reports.html", context)
 
 
@@ -511,7 +597,9 @@ def _stage_metrics(apps):
     app_ids = list(apps.values_list("id", flat=True))
     for stage in stages:
         durations = []
-        changes = list(StageChange.objects.filter(application_id__in=app_ids, to_stage=stage).order_by("application_id", "at"))
+        changes = list(StageChange.objects.filter(
+            application_id__in=app_ids, to_stage=stage,
+        ).order_by("application_id", "at"))
         by_app = {}
         for change in changes:
             by_app.setdefault(change.application_id, []).append(change)
@@ -565,7 +653,10 @@ def admin_console(request):
 def _admin_create_user(request):
     form = StaffCreateForm(request.POST)
     if form.is_valid():
-        user = User.objects.create_user(username=form.cleaned_data["username"], password=form.cleaned_data["password"], first_name=form.cleaned_data["first_name"], last_name=form.cleaned_data["surname"])
+        user = User.objects.create_user(
+            username=form.cleaned_data["username"], password=form.cleaned_data["password"],
+            first_name=form.cleaned_data["first_name"], last_name=form.cleaned_data["surname"],
+        )
         profile = user.profile
         profile.role = form.cleaned_data["role"]
         profile.office = get_office(request)
@@ -604,7 +695,10 @@ def _admin_save_template(request):
     body_en = request.POST.get("body_en", template.body_en)
     body_ny = request.POST.get("body_ny", template.body_ny)
     if len(body_en) > 160 or len(body_ny) > 160:
-        messages.error(request, "SMS templates must be 160 characters or fewer. Unicode messages may use multiple SMS segments.")
+        messages.error(
+            request,
+            "SMS templates must be 160 characters or fewer. Unicode messages may use multiple SMS segments.",
+        )
         return
     template.name = request.POST.get("name", template.name)[:80]
     template.body_en = body_en
@@ -680,7 +774,9 @@ def officer_ussd_sim(request):
 def _ussd_find_application(parts, phone):
     national_id = parts[1].strip().upper()[:32] if len(parts) > 1 else ""
     choice = "*".join(parts[2:]).strip() if len(parts) > 2 else ""
-    apps = Application.objects.filter(applicant__national_id__iexact=national_id).select_related("applicant", "current_stage", "office").order_by("-updated_at")
+    apps = Application.objects.filter(
+        applicant__national_id__iexact=national_id
+    ).select_related("applicant", "current_stage", "office").order_by("-updated_at")
     if choice == "0":
         return apps.filter(applicant__phone=phone).first(), national_id
     if choice:
@@ -696,7 +792,10 @@ def _ussd_status_response(parts, phone, lang, state):
     if len(parts) == 2:
         state["national_id"] = parts[1][:32]
         state["screen"] = "lookup_method"
-        text = "CON Enter tracking code, or 0 to use this phone:" if lang == "en" else "CON Lowetsani tracking code, kapena 0 kugwiritsa ntchito foniyi:"
+        text = (
+            "CON Enter tracking code, or 0 to use this phone:"
+            if lang == "en" else "CON Lowetsani tracking code, kapena 0 kugwiritsa ntchito foniyi:"
+        )
         return text, state
     application, national_id = _ussd_find_application(parts, phone)
     state["screen"] = "done"
@@ -707,7 +806,10 @@ def _ussd_status_response(parts, phone, lang, state):
         response = f"END {application.tracking_code}: {stage_name}. {stage_text}"
         audit(None, "ussd_lookup", application, {"success": True, "national_id_hash": hash_sensitive(national_id)})
         return response, state
-    response = "END We could not match those details. Contact Mangochi office." if lang == "en" else "END Sitinapeze zambiri zimenezi. Lumikizanani ndi ofesi ya Mangochi."
+    response = (
+        "END We could not match those details. Contact Mangochi office."
+        if lang == "en" else "END Sitinapeze zambiri zimenezi. Lumikizanani ndi ofesi ya Mangochi."
+    )
     audit(None, "ussd_lookup", details={"success": False, "national_id_hash": hash_sensitive(national_id)})
     return response, state
 
@@ -715,7 +817,10 @@ def _ussd_status_response(parts, phone, lang, state):
 def _ussd_language_response(parts, lang, state):
     if len(parts) == 1:
         state["screen"] = "language"
-        text = "CON Choose language\n1 English\n2 Chichewa" if lang == "en" else "CON Sankhani chinenero\n1 Chingelezi\n2 Chichewa"
+        text = (
+            "CON Choose language\n1 English\n2 Chichewa"
+            if lang == "en" else "CON Sankhani chinenero\n1 Chingelezi\n2 Chichewa"
+        )
         return text, lang, state
     if len(parts) == 2 and parts[1] in ("1", "2"):
         lang = "en" if parts[1] == "1" else "ny"
@@ -735,7 +840,10 @@ def _ussd_handle_collection(parts, phone, lang, state):
     if office:
         response = _ussd_collection_response(office, lang)
     else:
-        fallback = "Mangochi Immigration Office. Mon-Fri 08:00-16:00." if lang == "en" else "Ofesi ya Mangochi. Lolemba-Lachisanu, 08:00-16:00."
+        fallback = (
+            "Mangochi Immigration Office. Mon-Fri 08:00-16:00."
+            if lang == "en" else "Ofesi ya Mangochi. Lolemba-Lachisanu, 08:00-16:00."
+        )
         response = "END " + fallback
     state["screen"] = "done"
     return response, lang, state
@@ -753,54 +861,84 @@ _USSD_HANDLERS = {
 }
 
 
-def ussd_endpoint(request):
-    """Africa's Talking USSD callback: form fields sessionId, phoneNumber, text."""
-    from django.http import HttpResponse
-    if request.method != "POST":
-        return HttpResponse("END Invalid request", content_type="text/plain", status=405)
+def _ussd_parse_request(request):
     data = request.POST
     session_id = (data.get("sessionId") or data.get("session_id") or "demo").strip()[:120]
     phone = normalize_phone(data.get("phoneNumber") or data.get("phone") or "")
     text = (data.get("text") or "").strip()
-    session, _ = UssdSession.objects.get_or_create(session_id=session_id, defaults={"phone": phone, "state": {"language": "en"}})
+    session, _ = UssdSession.objects.get_or_create(
+        session_id=session_id, defaults={"phone": phone, "state": {"language": "en"}},
+    )
     if phone:
         session.phone = phone
     state = session.state or {"language": "en"}
     lang = state.get("language", "en")
     parts = text.split("*") if text else []
+    return session, phone, lang, state, parts
+
+
+def _ussd_dispatch(parts, phone, lang, state):
     if not parts:
-        response = _ussd_menu(lang)
         state["screen"] = "menu"
-    else:
-        handler = _USSD_HANDLERS.get(parts[0])
-        if handler is None:
-            response = "END Invalid option. Dial again to start."
-        else:
-            response, lang, state = handler(parts, phone, lang, state)
+        return _ussd_menu(lang), lang, state
+    handler = _USSD_HANDLERS.get(parts[0])
+    if handler is None:
+        return "END Invalid option. Dial again to start.", lang, state
+    return handler(parts, phone, lang, state)
+
+
+def ussd_endpoint(request):
+    """Africa's Talking USSD callback: form fields sessionId, phoneNumber, text."""
+    from django.http import HttpResponse
+    if request.method != "POST":
+        return HttpResponse("END Invalid request", content_type="text/plain", status=405)
+    session, phone, lang, state, parts = _ussd_parse_request(request)
+    response, lang, state = _ussd_dispatch(parts, phone, lang, state)
     response = _bound_ussd(response)
     session.state = state
     session.save()
     return HttpResponse(response, content_type="text/plain; charset=utf-8")
 
 
-def _ussd_collection_fields(office, lang):
+def _ussd_collection_hours(office, lang):
     is_chichewa = lang == "ny"
     hours = (office.collection_hours_for(lang) or "").strip()
     if not hours:
         hours = "Maola sanayikidwe" if is_chichewa else "Hours not set"
-    hours_text = ("Maola: " if is_chichewa else "Hours: ") + hours
+    prefix = "Maola: " if is_chichewa else "Hours: "
+    return prefix + hours
+
+
+def _ussd_collection_phone(office, lang):
     phone = (office.phone or "").strip()
-    phone_text = (("Foni: " if is_chichewa else "Tel: ") + phone) if phone else ""
-    if is_chichewa:
+    if not phone:
+        return ""
+    prefix = "Foni: " if lang == "ny" else "Tel: "
+    return prefix + phone
+
+
+def _ussd_collection_name(office, lang):
+    if lang == "ny":
         with translation.override(lang):
-            name = _(office.name)
-    else:
-        name = office.name
+            return _(office.name).strip()
+    return office.name.strip()
+
+
+def _ussd_collection_address(office):
     address = (office.address or "").strip().rstrip(".,")
     verbose_prefix = "Immigration Office, along the "
     if address.startswith(verbose_prefix):
         address = address[len(verbose_prefix):]
-    fields = {"name": name.strip(), "address": address, "hours": hours_text, "phone": phone_text}
+    return address
+
+
+def _ussd_collection_fields(office, lang):
+    fields = {
+        "name": _ussd_collection_name(office, lang),
+        "address": _ussd_collection_address(office),
+        "hours": _ussd_collection_hours(office, lang),
+        "phone": _ussd_collection_phone(office, lang),
+    }
     keys = [key for key in ("name", "address", "hours", "phone") if fields[key]]
     return fields, keys
 
