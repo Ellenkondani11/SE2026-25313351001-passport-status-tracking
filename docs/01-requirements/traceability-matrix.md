@@ -31,3 +31,8 @@
 | FR-26 | Built | `core/services.py`, `core/management/commands/send_pending.py`, `core/views.py:outbox` | `test_characterisation.py::test_render_message_uses_active_template_and_email_channel` |
 | FR-27 | Built | `core/views.py:ussd_endpoint`, `_bound_ussd`, `_ussd_collection_response` | `test_characterisation.py::test_ussd_phone_shortcut_invalid_option_and_truncation` |
 | FR-28 | Built | `core/views.py:admin_console`, `core/models.py:AuditLog` | Covered in TDD/admin extension tests (`v0.9`) |
+
+## Sealed Drops status (honest disclosure)
+- Sealed Drop 1 (Requirements baseline), Drop 2 (Design baseline) and Drop 3 (Implementation baseline) were **not issued by the lecturer** for this course run.
+- The traceability/RMMM/reengineering hooks (FR-24, `verify_slices`, `verify_audit`, reengineering report) are implemented and ready to consume a drop when issued.
+- Footer: Token `EK01-HAZY-VM26` | Student `25313351001`

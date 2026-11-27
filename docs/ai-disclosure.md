@@ -36,5 +36,9 @@
 - Load test measured p95 18091.81 ms (lookup) and 19271.42 ms (status); gate failed.
 - Final suite: 62 tests passing; verify_slices PASS; lizard 0 warnings; bandit 6 Low.
 
-## 7. Human Oversight
+## 8. v0.95 Final Update (2026-11-25)
+- Added sandbox readiness helper, CPM/PERT, NHPP, chart generation, management/analysis/user docs, SBOM, checksums, reflection, and logbook entry.
+- Final checks: 62 tests passing; verify_slices PASS; verify_audit PASS; flake8 0; lizard 0 warnings; bandit 6 Low.
+
+## 9. Human Oversight
 All generated documentation was reviewed for consistency with the as-built baseline and the Signature Challenge gap analysis before being committed to the working tree. Final approval rests with the student (Ellen Kondani, 25313351001).

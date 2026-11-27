@@ -1,0 +1,15 @@
+%% State Diagram — Application lifecycle
+%% Footer: EK01-HAZY-VM26 · 25313351001
+stateDiagram-v2
+  [*] --> received
+  received --> under_review
+  under_review --> approved
+  under_review --> rejected
+  under_review --> on_hold
+  on_hold --> under_review : resume
+  approved --> printed
+  printed --> ready
+  ready --> collected
+  collected --> [*]
+  rejected --> [*]
+  Footer["EK01-HAZY-VM26 · 25313351001"]

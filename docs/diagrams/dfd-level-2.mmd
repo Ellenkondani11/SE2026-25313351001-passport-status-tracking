@@ -1,0 +1,17 @@
+%% DFD Level 2 — Process 3.0 & 4.0
+%% Footer: EK01-HAZY-VM26 · 25313351001
+graph TD
+  subgraph "3.0 Update application status"
+    A[Officer/Supervisor] --> P31((3.1 Validate role & stage))
+    P31 --> P32((3.2 Change stage / hold / resume / reject))
+    P32 --> P33((3.3 Record StageChange))
+    P33 --> P34((3.4 Publish StageChangedEvent))
+  end
+  subgraph "4.0 Send notifications"
+    P34 --> P41((4.1 Prepare notification))
+    P41 --> P42((4.2 Deliver via gateway))
+    P42 --> P43((4.3 Record outcome))
+    P43 --> P44((4.4 Schedule backoff))
+    P44 --> P45((4.5 Audit dispatch))
+  end
+  P45 --> Footer["EK01-HAZY-VM26 · 25313351001"]

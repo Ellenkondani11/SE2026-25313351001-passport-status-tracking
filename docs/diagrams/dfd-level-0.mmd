@@ -1,0 +1,12 @@
+%% DFD Level 0 — PassTrack
+%% Footer: EK01-HAZY-VM26 · 25313351001
+graph LR
+  Ext1[Applicant] -->|status request| P((0.0 PassTrack System))
+  Ext2[Officer] -->|stage update| P
+  Ext3[Supervisor] -->|approve/reject| P
+  Ext4[SMS Gateway] <-->|SMS| P
+  Ext5[USSD Gateway] <-->|USSD| P
+  P -->|data store| D1[(D1 Application DB)]
+  P -->|audit| D2[(D2 Audit Log)]
+  Footer["EK01-HAZY-VM26 · 25313351001"]
+  P --> Footer

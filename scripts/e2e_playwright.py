@@ -94,12 +94,12 @@ def run():
         mobile = browser.new_page(viewport={"width": 320, "height": 780})
         mobile.on("pageerror", lambda error: errors.append(str(error)))
         mobile.goto(f"{BASE_URL}/", wait_until="networkidle")
-        assert mobile.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Public home overflows at 320 px"
+        assert mobile.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Public home overflows at 320 px"  # noqa: E501
         mobile.goto(f"{BASE_URL}/ussd-demo/", wait_until="networkidle")
-        assert mobile.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "USSD demo overflows at 320 px"
+        assert mobile.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "USSD demo overflows at 320 px"  # noqa: E501
 
         assert not errors, "Browser JavaScript errors: " + " | ".join(errors)
-        print(f"PASS: registered {code}, advanced to Approved, public lookup, USSD check, bulk-marked Printed, and opened reports.")
+        print(f"PASS: registered {code}, advanced to Approved, public lookup, USSD check, bulk-marked Printed, and opened reports.")  # noqa: E501
         browser.close()
 
 

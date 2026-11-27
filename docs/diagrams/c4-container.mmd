@@ -1,0 +1,16 @@
+%% C4 Container — PassTrack
+%% Footer: EK01-HAZY-VM26 · 25313351001
+graph TD
+  subgraph "PassTrack System"
+    W[Web App Django]
+    A[REST API DRF]
+    DB[(PostgreSQL)]
+    W --> DB
+    A --> DB
+  end
+  U[User Browser] --> W
+  O[Officer Mobile] --> W
+  G[SMS Gateway] --> A
+  U2[USSD Gateway] --> A
+  Footer["EK01-HAZY-VM26 · 25313351001"]
+  W --> Footer

@@ -1,0 +1,14 @@
+%% Sequence USSD — Applicant dials *384*123#
+%% Footer: EK01-HAZY-VM26 · 25313351001
+sequenceDiagram
+  participant A as Applicant
+  participant G as USSD Gateway
+  participant V as UssdAPIView
+  participant U as UssdChannelStrategy
+  A->>G: dial *384*123#
+  G->>V: POST session
+  V->>U: render(application)
+  U-->>V: text<=160
+  V-->>G: USSD response
+  G-->>A: screen
+  Footer["EK01-HAZY-VM26 · 25313351001"]

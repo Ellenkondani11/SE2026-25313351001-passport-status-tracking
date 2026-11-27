@@ -30,6 +30,12 @@ class ConsoleGateway(NotificationGateway):
 
 
 class AfricasTalkingGateway(NotificationGateway):
+    def _endpoint(self):
+        base = settings.AT_BASE_URL
+        if settings.AT_USERNAME == "sandbox" and base == "https://api.africastalking.com/version1/messaging":
+            return "https://api.sandbox.africastalking.com/version1/messaging"
+        return base
+
     def send(self, notification):
         if not settings.AT_USERNAME or not settings.AT_API_KEY:
             return GatewayResult("failed", error="Africa's Talking credentials are not configured.")
@@ -38,7 +44,7 @@ class AfricasTalkingGateway(NotificationGateway):
         if settings.AT_SENDER_ID:
             data["from"] = settings.AT_SENDER_ID
         try:
-            response = requests.post(settings.AT_BASE_URL, headers=headers, data=data, timeout=12)
+            response = requests.post(self._endpoint(), headers=headers, data=data, timeout=12)
             response.raise_for_status()
             payload = response.json()
             recipients = payload.get("SMSMessageData", {}).get("Recipients", [])

@@ -1,0 +1,11 @@
+%% STRIDE Threat Model — Level 1 DFD
+%% Footer: EK01-HAZY-VM26 · 25313351001
+graph TD
+  S[Spoofing] --> P1((1.0 Register))
+  T[Tampering] --> P3((3.0 Update status))
+  R[Repudiation] --> P4((4.0 Notify))
+  I[Info disclosure] --> P2((2.0 Lookup))
+  D[DoS] --> P1
+  E[Elevation of privilege] --> P3
+  Footer["EK01-HAZY-VM26 · 25313351001"]
+  E --> Footer

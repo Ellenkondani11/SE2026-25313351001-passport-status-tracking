@@ -1,0 +1,11 @@
+%% Money Flow Reconciliation — PassTrack
+%% Footer: EK01-HAZY-VM26 · 25313351001
+graph LR
+  F[Application fee MWK] --> B[Budget MWK 15M]
+  B --> S[SMS airtime cost]
+  B --> O[Ops cost]
+  S --> R[Reconciliation]
+  O --> R
+  R --> Rep[Monthly report]
+  Footer["EK01-HAZY-VM26 · 25313351001"]
+  Rep --> Footer

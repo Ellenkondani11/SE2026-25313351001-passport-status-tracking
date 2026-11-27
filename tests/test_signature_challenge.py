@@ -1,7 +1,6 @@
 from datetime import timedelta
 
 from django.contrib.auth.models import User
-from django.core import mail
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
@@ -9,7 +8,6 @@ from django.utils import timezone
 
 from core.audit_chain import verify_audit_chain
 from core.models import Applicant, Application, AuditLog, LookupAttempt, LookupOtp, hash_sensitive
-from core.utils import client_ip
 
 
 class SignatureChallengeTests(TestCase):
@@ -36,19 +34,19 @@ class SignatureChallengeTests(TestCase):
         self.officer.profile.save()
 
     def test_tracking_code_and_dob_lookup_succeeds(self):
-        response = self.client.post("/", {"tracking_code": self.application.tracking_code, "date_of_birth": "1995-04-12"})
+        response = self.client.post("/", {"tracking_code": self.application.tracking_code, "date_of_birth": "1995-04-12"})  # noqa: E501
         self.assertEqual(response.status_code, 302)
         self.assertIn(self.application.tracking_code, response["Location"])
 
     def test_tracking_code_and_dob_lookup_wrong_dob_fails(self):
-        response = self.client.post("/", {"tracking_code": self.application.tracking_code, "date_of_birth": "1990-01-01"})
+        response = self.client.post("/", {"tracking_code": self.application.tracking_code, "date_of_birth": "1990-01-01"})  # noqa: E501
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "We could not match those details")
 
     def test_missing_dob_on_applicant_fails(self):
         self.applicant.date_of_birth = None
         self.applicant.save()
-        response = self.client.post("/", {"tracking_code": self.application.tracking_code, "date_of_birth": "1995-04-12"})
+        response = self.client.post("/", {"tracking_code": self.application.tracking_code, "date_of_birth": "1995-04-12"})  # noqa: E501
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "We could not match those details")
 
@@ -57,10 +55,10 @@ class SignatureChallengeTests(TestCase):
             response = self.client.post("/lookup/otp/", {"tracking_code": self.application.tracking_code})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(LookupOtp.objects.count(), 1)
-        otp = LookupOtp.objects.first()
-        self.assertEqual(len(otp.code_hash), 64)
-        self.assertIsNotNone(otp.expires_at)
-        self.assertTrue(otp.expires_at > timezone.now())
+        created_otp = LookupOtp.objects.first()
+        self.assertEqual(len(created_otp.code_hash), 64)
+        self.assertIsNotNone(created_otp.expires_at)
+        self.assertTrue(created_otp.expires_at > timezone.now())
 
     def test_otp_submission_succeeds_and_marks_used(self):
         otp_code = "123456"
@@ -75,7 +73,7 @@ class SignatureChallengeTests(TestCase):
 
     def test_otp_reuse_fails(self):
         otp_code = "123456"
-        otp = LookupOtp.objects.create(
+        LookupOtp.objects.create(
             application=self.application, code_hash=hash_sensitive(otp_code),
             expires_at=timezone.now() + timedelta(minutes=10), used_at=timezone.now(),
         )
@@ -97,7 +95,7 @@ class SignatureChallengeTests(TestCase):
         codes = [f"MW-MGC-{self.year}-{i:05d}" for i in range(2, 8)]
         for code in codes[:5]:
             self.client.post("/", {"tracking_code": code, "date_of_birth": "1990-01-01"})
-        blocked = self.client.post("/", {"tracking_code": self.application.tracking_code, "date_of_birth": "1995-04-12"})
+        blocked = self.client.post("/", {"tracking_code": self.application.tracking_code, "date_of_birth": "1995-04-12"})  # noqa: E501
         self.assertEqual(blocked.status_code, 200)
         self.assertContains(blocked, "We could not match those details")
         self.assertEqual(LookupAttempt.objects.count(), 6)
@@ -144,7 +142,7 @@ class BackwardCompatTests(TestCase):
         from core.models import Office, Stage
 
         self.office = Office.objects.create(code="MGC", name="Mangochi", district="Mangochi")
-        self.stage = Stage.objects.create(key="received", order=10, name="Received", applicant_text_en="Received.", applicant_text_ny="Lalandiridwa.")
+        self.stage = Stage.objects.create(key="received", order=10, name="Received", applicant_text_en="Received.", applicant_text_ny="Lalandiridwa.")  # noqa: E501
         self.year = timezone.localdate().year
         self.applicant = Applicant.objects.create(
             national_id="1234567890123", first_name="Chisomo", surname="Banda",

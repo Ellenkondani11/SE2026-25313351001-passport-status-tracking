@@ -1,0 +1,12 @@
+%% Context Diagram — PassTrack
+%% Footer: EK01-HAZY-VM26 · 25313351001
+graph LR
+  A[Applicant] --> P((PassTrack PASTNS))
+  O[Immigration Officer] --> P
+  S[Supervisor] --> P
+  Ad[ICT Admin] --> P
+  G[SMS Gateway Africa's Talking] <--> P
+  U[USSD Gateway] <--> P
+  P --> DB[(PostgreSQL / SQLite)]
+  Footer["EK01-HAZY-VM26 · 25313351001"]
+  P --> Footer

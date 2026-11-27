@@ -1,0 +1,22 @@
+%% BPMN Swimlane — PassTrack
+%% Footer: EK01-HAZY-VM26 · 25313351001
+graph TD
+  subgraph Applicant
+    A1[Submit docs] --> A2[Check status]
+  end
+  subgraph CounterClerk
+    C1[Register] --> C2[Scan]
+  end
+  subgraph Supervisor
+    S1[Review] --> S2[Approve/Reject]
+  end
+  subgraph PassTrackSystem
+    P1[Store] --> P2[Notify]
+  end
+  A1 --> C1
+  C1 --> P1
+  P1 --> S1
+  S2 --> P2
+  P2 --> A2
+  Footer["EK01-HAZY-VM26 · 25313351001"]
+  P2 --> Footer

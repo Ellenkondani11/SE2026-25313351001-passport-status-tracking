@@ -27,4 +27,18 @@
 ## 3. Live git bisect check
 [TO RUN: git bisect session]
 
-Footer: Token `EK01-HAZY-VM26` | Student `25313351001`
+Footer: Token `EK01-HAZY-VM26` | Student `25313351001`=== git log --oneline ===
+d2ff5fc (HEAD -> develop) fix(ci): clear complexity/flake8 gates, add WAL/indexes, and complete engineering docs
+2d67569 (origin/develop) fix(ci): clear complexity/flake8 gates, add WAL/indexes, and complete engineering docs
+0c2f661 docs(design): add CI workflow, ADRs, FTR, reengineering report, and 500-user load test
+a03cd97 docs(design): add CI workflow, ADRs, FTR, reengineering report, and 500-user load test
+926dddc (tag: v0.9) feat(channels): add Strategy/Observer/Template Method sync, backoff retries, and hotspot refactoring
+28368cd feat(security): add DOB/OTP private lookup, IP throttling, and hash-chained audit log
+fedbcc2 (tag: v0.8) docs: establish v0.8 requirements baseline (SRS, Gherkin, KAOS, RTM)
+b350400 tests: add 18 pre-change characterisation tests and baseline report
+698bf8e Add generated Python cache files and test coverage report
+e2e27bd (tag: v0.7-asbuilt, main) Expand README with comprehensive project context
+3e7f1fe Initial commit2
+1ae0f35 Initial commit
+
+Footer: Token EK01-HAZY-VM26 | Student 25313351001
