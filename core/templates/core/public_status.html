@@ -47,7 +47,7 @@
 <section class="notification-card" aria-labelledby="notification-title">
   <div class="notification-title-row"><h2 id="notification-title">{% translate "Get updates by SMS" %}</h2><span class="mini-check"><svg class="icon"><use href="#icon-check"/></svg></span></div>
   <p>{% translate "Updates are sent to the phone number on your application:" %} <strong>{{ application.applicant.masked_phone }}</strong></p>
-  <p class="small-copy">{% translate "Wrong number? Applicants cannot change a number online. Call the office; staff will check your ID." %} <a href="tel:{{ application.office.phone|default:'+2651594300' }}">{% translate "Contact the office" %}</a></p>
+  <p class="small-copy">{% translate "Wrong number? Applicants cannot change a number online. Call the office; staff will check your ID." %} <a href="tel:{{ application.office.phone }}">{% translate "Contact the office" %}</a></p>
 </section>
 <section class="history-section" aria-labelledby="history-title">
   <h2 id="history-title">{% translate "Notification history" %}</h2>
@@ -62,5 +62,5 @@
   </ol>
   {% else %}<p>{% translate "No messages have been sent yet." %}</p>{% endif %}
 </section>
-<div class="support-footer"><p>{% translate "If you think these details are wrong, call Mangochi Immigration Office." %}</p><a class="button button-secondary" href="tel:+2651594300">{% translate "Call the office" %}: +265 1 594 300</a></div>
+<div class="support-footer"><p>{% translate "If you think these details are wrong, call Mangochi Immigration Office." %}</p></div>
 {% endblock %}

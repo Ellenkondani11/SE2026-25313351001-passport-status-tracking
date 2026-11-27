@@ -1,0 +1,18 @@
+%% Sequence SMS — Officer updates status
+%% Footer: EK01-HAZY-VM26 · 25313351001
+sequenceDiagram
+  participant O as Officer
+  participant V as application_detail
+  participant B as StageEventBus
+  participant S as SmsChannelObserver
+  participant D as BaseNotificationDispatcher
+  participant G as SMS Gateway
+  O->>V: POST advance stage
+  V->>B: publish(StageChangedEvent)
+  B->>S: update(event)
+  S->>D: dispatch(notification)
+  D->>G: send SMS
+  G-->>D: delivery report
+  D-->>V: outcome
+  V-->>O: 200 OK
+  Footer["EK01-HAZY-VM26 · 25313351001"]

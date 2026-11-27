@@ -1,0 +1,27 @@
+%% Class Diagram — models + channels
+%% Footer: EK01-HAZY-VM26 · 25313351001
+classDiagram
+  class Application {
+    tracking_code
+    status
+    current_stage
+    next_stage()
+  }
+  class Applicant { national_id phone language }
+  class Stage { key order notify is_terminal }
+  class Notification { channel status retry_count }
+  class ChannelStrategy { render() _bound() }
+  class WebChannelStrategy
+  class SmsChannelStrategy
+  class UssdChannelStrategy
+  class StageEventBus { publish() subscribe() }
+  class StageObserver { update() }
+  class SmsChannelObserver { update() }
+  class BaseNotificationDispatcher { dispatch() prepare() deliver() }
+  ChannelStrategy <|-- WebChannelStrategy
+  ChannelStrategy <|-- SmsChannelStrategy
+  ChannelStrategy <|-- UssdChannelStrategy
+  StageObserver <|-- SmsChannelObserver
+  BaseNotificationDispatcher <|-- SmsDispatchFlow
+  StageEventBus o-- StageObserver
+  Footer["EK01-HAZY-VM26 · 25313351001"]

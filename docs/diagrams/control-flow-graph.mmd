@@ -1,0 +1,18 @@
+%% Control Flow Graph — refactored function (CCN<=10)
+%% Footer: EK01-HAZY-VM26 · 25313351001
+graph TD
+  S[Start] --> A{role ok?}
+  A -->|no| X[Return 403]
+  A -->|yes| B{stage valid?}
+  B -->|no| Y[Return 400]
+  B -->|yes| C[Change stage]
+  C --> D{notify?}
+  D -->|yes| E[Publish event]
+  D -->|no| F[Skip notify]
+  E --> G[Return 200]
+  F --> G
+  X --> END[End]
+  Y --> END
+  G --> END
+  Footer["EK01-HAZY-VM26 · 25313351001"]
+  END --> Footer

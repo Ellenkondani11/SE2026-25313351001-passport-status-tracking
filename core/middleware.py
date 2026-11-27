@@ -26,6 +26,14 @@ class QueryLanguageMiddleware(MiddlewareMixin):
         return response
 
 
+class SessionTouchMiddleware(MiddlewareMixin):
+    """Save the session for authenticated users to preserve idle timeout."""
+
+    def process_request(self, request):
+        if getattr(request, "user", None) and getattr(request.user, "is_authenticated", False):
+            request.session.modified = True
+
+
 class PartitionedMorsel(Morsel):
     """Cookie serializer extension for Partitioned, supported by modern browsers."""
     def OutputString(self, attrs=None):
@@ -44,7 +52,10 @@ class SecurityHeadersMiddleware(MiddlewareMixin):
         response.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         response.setdefault("Cross-Origin-Opener-Policy", "same-origin")
-        response.setdefault("Content-Security-Policy", "frame-ancestors 'self' https://arena.ai https://*.arena.ai https://*.e2b.app")
+        response.setdefault(
+            "Content-Security-Policy",
+            "frame-ancestors 'self' https://arena.ai https://*.arena.ai https://*.e2b.app",
+        )
         # Modern browsers require Secure for SameSite=None and Partitioned cookies.
         # Some preview proxies terminate TLS without forwarding the scheme header;
         # the public preview host is HTTPS even if Django sees its internal hop.

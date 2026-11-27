@@ -48,15 +48,9 @@
     <section class="help-panel" aria-labelledby="help-title">
       <h2 id="help-title">{% translate "Need help?" %}</h2>
       <p>{% translate "If your phone number has changed or you entered the wrong one, call Mangochi Immigration Office. Staff will check your ID before changing it." %}</p>
-      <a class="text-link" href="tel:+2651594300">{% translate "Call the office" %}: +265 1 594 300</a>
     </section>
     <div class="ussd-callout"><svg class="icon"><use href="#icon-phone"/></svg><p><strong>{% translate "No internet access?" %}</strong><br>{% translate "Dial *384*123# from the phone number on your application." %}</p><a href="{% url 'ussd_demo' %}">{% translate "Try the demo" %}</a></div>
   </section>
-  <aside class="public-home-visual" aria-label="{% translate 'Malawi Immigration emblem' %}">
-    <figure class="immigration-crest">
-      <img src="{% static 'images/malawi-immigration-crest.png' %}" alt="{% translate 'Malawi Immigration emblem' %}" width="150" height="121" fetchpriority="high">
-      <figcaption>{% translate "Mangochi Immigration Office" %}</figcaption>
-    </figure>
-  </aside>
+
 </div>
 {% endblock %}

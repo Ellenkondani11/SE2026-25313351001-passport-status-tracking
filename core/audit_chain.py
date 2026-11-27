@@ -30,13 +30,11 @@ def _canonical(entry):
 
 def compute_entry_hash(entry):
     previous = AuditLog.objects.order_by("at", "id").last()
-    prev_hash = previous.entry_hash if previous and previous.entry_hash else "GENESIS"
-    if previous is None:
-        prev_hash = "GENESIS"
+    prev_hash = "GENESIS"
+    if previous is not None and previous.entry_hash:
+        prev_hash = previous.entry_hash
     entry.prev_hash = prev_hash
-    digest = hashlib.sha256((_canonical(entry)).encode("utf-8")).hexdigest()
-    # ensure prev_hash is included in canonical already; recompute with assigned prev_hash
-    entry.prev_hash = prev_hash
+    # prev_hash is included in canonical payload; compute final hash.
     entry.entry_hash = hashlib.sha256(_canonical(entry).encode("utf-8")).hexdigest()
     return entry.prev_hash, entry.entry_hash
 

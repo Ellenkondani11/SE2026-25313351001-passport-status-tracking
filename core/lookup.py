@@ -3,11 +3,9 @@ from datetime import date, timedelta
 
 from django.shortcuts import redirect, render
 from django.utils import timezone
-from django.utils.translation import get_language
 
 from . import services
-from .forms import RegisterApplicationForm
-from .models import Application, AuditLog, LookupAttempt, LookupOtp, hash_sensitive
+from .models import Application, LookupAttempt, LookupOtp, hash_sensitive
 from .utils import audit, client_ip, normalize_phone
 
 LOOKUP_LIMIT = 5
@@ -42,7 +40,9 @@ def _log_attempt(digest, ip, success):
 def _application_by_code(code):
     if not code:
         return None
-    return Application.objects.filter(tracking_code__iexact=code.strip().upper()).select_related("applicant", "office", "current_stage").first()
+    return Application.objects.filter(
+        tracking_code__iexact=code.strip().upper()
+    ).select_related("applicant", "office", "current_stage").first()
 
 
 def _dispatch(application, event, **kwargs):
@@ -105,7 +105,9 @@ def _resolve_legacy(national_id, lookup_value, ip):
         return None, digest, True
     application = None
     if national_id and lookup_value:
-        candidates = Application.objects.filter(applicant__national_id__iexact=national_id).select_related("applicant", "office", "current_stage")
+        candidates = Application.objects.filter(
+            applicant__national_id__iexact=national_id
+        ).select_related("applicant", "office", "current_stage")
         code = lookup_value.upper().replace(" ", "")
         phone = normalize_phone(lookup_value)
         if code.startswith("MW-"):
@@ -133,7 +135,6 @@ def public_home(request):
             request.session["verified_status_at"] = timezone.now().isoformat()
             return redirect(f"/status/?code={application.tracking_code}")
         error = "We could not match those details. Check what you entered or contact Mangochi office."
-    lang = get_language() or "en"
     return render(request, "core/public_home.html", {"error": error, "message": message})
 
 
@@ -155,4 +156,7 @@ def request_otp(request):
             notification.body = f"Your PASTNS one-time code is {otp_code}. It expires in {OTP_EXPIRY_MINUTES} minutes."
             notification.save(update_fields=["body", "updated_at"])
     from django.http import HttpResponse
-    return HttpResponse("If that application exists, a one-time code has been sent.", content_type="text/plain; charset=utf-8", status=200)
+    return HttpResponse(
+        "If that application exists, a one-time code has been sent.",
+        content_type="text/plain; charset=utf-8", status=200,
+    )

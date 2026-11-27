@@ -1,4 +1,3 @@
-from datetime import timedelta
 from django.contrib.auth.models import User
 from django.core import mail
 from django.test import TestCase, override_settings
@@ -6,8 +5,8 @@ from django.utils import timezone
 from rest_framework.authtoken.models import Token
 
 from core.models import (
-    Applicant, Application, AuditLog, LoginAttempt, LookupAttempt,
-    Notification, Office, OfficerNote, SmsTemplate, Stage, StageChange,
+    Applicant, Application, AuditLog, LookupAttempt,
+    Notification, Office, SmsTemplate, Stage, StageChange,
     hash_sensitive,
 )
 from core.services import AfricasTalkingGateway, notify, render_message, retry_notification
@@ -125,7 +124,7 @@ class PastnsCharacterisationTests(TestCase):
     def test_public_lookup_rate_limit_blocks_sixth_attempt(self):
         for _ in range(5):
             self.client.post("/", {"national_id": self.applicant.national_id, "phone_or_code": "wrong-code"})
-        blocked = self.client.post("/", {"national_id": self.applicant.national_id, "phone_or_code": self.application.tracking_code})
+        blocked = self.client.post("/", {"national_id": self.applicant.national_id, "phone_or_code": self.application.tracking_code})  # noqa: E501
         self.assertEqual(blocked.status_code, 200)
         self.assertContains(blocked, "We could not match those details")
         self.assertEqual(LookupAttempt.objects.count(), 6)
@@ -179,7 +178,7 @@ class PastnsCharacterisationTests(TestCase):
         self.assertEqual(created_app.applicant.phone, "+265881234567")
         self.assertEqual(created_app.current_stage.key, "received")
         self.assertTrue(Notification.objects.filter(application=created_app).exists())
-        self.assertTrue(AuditLog.objects.filter(action="application_registered", object_id=str(created_app.pk)).exists())
+        self.assertTrue(AuditLog.objects.filter(action="application_registered", object_id=str(created_app.pk)).exists())  # noqa: E501
 
     def test_hold_and_resume_preserve_previous_stage(self):
         self.client.force_login(self.officer)
@@ -187,7 +186,7 @@ class PastnsCharacterisationTests(TestCase):
         self.application.refresh_from_db()
         self.assertEqual(self.application.current_stage.key, "under_review")
 
-        self.client.post(f"/officer/applications/{self.application.tracking_code}/", {"action": "hold", "reason": "Missing photo"})
+        self.client.post(f"/officer/applications/{self.application.tracking_code}/", {"action": "hold", "reason": "Missing photo"})  # noqa: E501
         self.application.refresh_from_db()
         self.assertEqual(self.application.status, "on_hold")
         self.assertEqual(self.application.current_stage.key, "on_hold")
@@ -281,7 +280,8 @@ class PastnsCharacterisationTests(TestCase):
         failed.refresh_from_db()
         self.assertEqual(failed.status, "sent")
         self.assertEqual(failed.error, "")
-        self.assertEqual(AfricasTalkingGateway().send(failed).status, "failed")
+        with override_settings(AT_USERNAME="", AT_API_KEY="", PASTNS_SMS_GATEWAY="africastalking"):
+            self.assertEqual(AfricasTalkingGateway().send(failed).status, "failed")
 
     @override_settings(SMS_CALLBACK_TOKEN="callback-secret")
     def test_api_office_scoping_and_sms_delivery_callback(self):
@@ -293,7 +293,7 @@ class PastnsCharacterisationTests(TestCase):
         llw_token = Token.objects.create(user=llw_user)
 
         self.assertEqual(
-            self.client.get(f"/api/applications/{self.application.tracking_code}/", HTTP_AUTHORIZATION=f"Token {llw_token.key}").status_code,
+            self.client.get(f"/api/applications/{self.application.tracking_code}/", HTTP_AUTHORIZATION=f"Token {llw_token.key}").status_code,  # noqa: E501
             404,
         )
         self.assertEqual(
@@ -319,7 +319,7 @@ class PastnsCharacterisationTests(TestCase):
             application=self.application, channel="sms", to=self.applicant.phone,
             template_key="received", body="Msg", status="sent", provider_ref="at-msg-1",
         )
-        unauth = self.client.post("/api/sms/delivery/", {"provider_ref": "at-msg-1", "status": "Success"}, content_type="application/json")
+        unauth = self.client.post("/api/sms/delivery/", {"provider_ref": "at-msg-1", "status": "Success"}, content_type="application/json")  # noqa: E501
         self.assertEqual(unauth.status_code, 403)
 
         ok = self.client.post(

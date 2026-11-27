@@ -1,0 +1,14 @@
+%% V-Model Map — PassTrack
+%% Footer: EK01-HAZY-VM26 · 25313351001
+graph TD
+  R[Requirements] --> D[Design]
+  D --> I[Implementation]
+  I --> UT[Unit Tests]
+  UT --> IT[Integration Tests]
+  IT --> ST[System Tests]
+  ST --> AT[Acceptance UAT]
+  R -.-> AT
+  D -.-> ST
+  I -.-> IT
+  Footer["EK01-HAZY-VM26 · 25313351001"]
+  AT --> Footer

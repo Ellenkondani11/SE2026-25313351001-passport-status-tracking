@@ -1,0 +1,21 @@
+%% ERD — 3NF across 14 Django models
+%% Footer: EK01-HAZY-VM26 · 25313351001
+erDiagram
+  OFFICE ||--o{ APPLICATION : hosts
+  OFFICE ||--o{ PROFILE : staffs
+  APPLICANT ||--o{ APPLICATION : submits
+  STAGE ||--o{ APPLICATION : current
+  STAGE ||--o{ STAGECHANGE : from_to
+  APPLICATION ||--o{ STAGECHANGE : has
+  APPLICATION ||--o{ NOTIFICATION : has
+  APPLICATION ||--o{ LOOKUPOTP : has
+  APPLICATION ||--o{ OFFICERNOTE : has
+  USER ||--|| PROFILE : profile
+  USER ||--o{ STAGECHANGE : by
+  USER ||--o{ AUDITLOG : acts
+  USER ||--o{ OFFICERNOTE : writes
+  SMSTEMPLATE }o--|| NOTIFICATION : template
+  APPLICATION ||--o{ LOOKUPATTEMPT : hashed
+  USER ||--o{ LOGINATTEMPT : hashed
+  USSDSESSION }o--o{ APPLICATION : lookup
+  Footer["EK01-HAZY-VM26 · 25313351001"]

@@ -1,13 +1,10 @@
-import json
 import logging
-import os
 from dataclasses import dataclass
 from django.conf import settings
 from django.core.mail import send_mail
-from django.utils import timezone
 import requests
-from .models import AuditLog, Notification, SmsTemplate
-from .utils import mask_phone
+from . import channels
+from .models import AuditLog, Notification, SmsTemplate, StageChange
 
 logger = logging.getLogger("pastns.notifications")
 
@@ -33,6 +30,12 @@ class ConsoleGateway(NotificationGateway):
 
 
 class AfricasTalkingGateway(NotificationGateway):
+    def _endpoint(self):
+        base = settings.AT_BASE_URL
+        if settings.AT_USERNAME == "sandbox" and base == "https://api.africastalking.com/version1/messaging":
+            return "https://api.sandbox.africastalking.com/version1/messaging"
+        return base
+
     def send(self, notification):
         if not settings.AT_USERNAME or not settings.AT_API_KEY:
             return GatewayResult("failed", error="Africa's Talking credentials are not configured.")
@@ -41,13 +44,16 @@ class AfricasTalkingGateway(NotificationGateway):
         if settings.AT_SENDER_ID:
             data["from"] = settings.AT_SENDER_ID
         try:
-            response = requests.post(settings.AT_BASE_URL, headers=headers, data=data, timeout=12)
+            response = requests.post(self._endpoint(), headers=headers, data=data, timeout=12)
             response.raise_for_status()
             payload = response.json()
             recipients = payload.get("SMSMessageData", {}).get("Recipients", [])
             if recipients and recipients[0].get("statusCode") in (100, 101, 102):
                 return GatewayResult("sent", provider_ref=recipients[0].get("messageId", ""))
-            detail = recipients[0].get("status", "Provider did not accept the message") if recipients else "Provider returned no recipient result"
+            detail = (
+                recipients[0].get("status", "Provider did not accept the message")
+                if recipients else "Provider returned no recipient result"
+            )
             return GatewayResult("failed", error=str(detail))
         except (requests.RequestException, ValueError) as exc:
             return GatewayResult("failed", error=str(exc)[:500])
@@ -97,33 +103,21 @@ def render_message(application, event):
 
 
 def send_notification(notification, actor=None, ip=None):
-    """Send an existing outbox row, persist the provider outcome and audit it."""
-    gateway = get_gateway("email" if notification.channel == "email" else "sms")
-    notification.status = "queued"
-    notification.error = ""
-    notification.save(update_fields=["status", "error", "updated_at"])
-    result = gateway.send(notification)
-    notification.status = result.status
-    notification.provider_ref = result.provider_ref or notification.provider_ref
-    notification.error = result.error
-    notification.sent_at = timezone.now() if result.status in ("sent", "delivered") else None
-    notification.save(update_fields=["status", "provider_ref", "error", "sent_at", "updated_at"])
-    destination = mask_phone(notification.to) if notification.channel == "sms" else notification.to[:2] + "•••" if "@" in notification.to else "••••"
-    AuditLog.objects.create(
-        user=actor,
-        action="notification_failed" if result.status == "failed" else "notification_dispatched",
-        object_type="Notification",
-        object_id=str(notification.pk),
-        details={"application": notification.application.tracking_code, "channel": notification.channel,
-                 "to": destination, "template": notification.template_key, "status": result.status},
-        ip=ip,
-    )
-    return notification
+    """Send an existing outbox row, persist provider outcome, and audit it."""
+    if notification.channel == "email":
+        flow = channels.EmailDispatchFlow()
+    else:
+        flow = channels.SmsDispatchFlow()
+    return flow.dispatch(notification, actor=actor, ip=ip)
 
 
-def notify(application, event, channel="sms", actor=None, ip=None):
+def notify(application, event, channel="sms", actor=None, ip=None, idempotency_key=None):
     """Synchronous notification: create outbox row, then call the selected gateway."""
     key = getattr(event, "key", None) or str(event)
+    if idempotency_key:
+        existing = Notification.objects.filter(idempotency_key=idempotency_key).first()
+        if existing is not None:
+            return existing
     if channel == "email":
         destination = application.applicant.email
         if not destination:
@@ -137,12 +131,52 @@ def notify(application, event, channel="sms", actor=None, ip=None):
         template_key=key,
         body=render_message(application, key),
         status="queued",
+        idempotency_key=idempotency_key,
     )
     return send_notification(row, actor=actor, ip=ip)
 
 
 def retry_notification(notification, actor=None, ip=None):
     return send_notification(notification, actor=actor, ip=ip)
+
+
+def transition_application_stage(
+    application, target_stage, actor=None, reason="", new_status=None, ip=None, notify=True,
+):
+    old = application.current_stage
+    application.current_stage = target_stage
+    if new_status:
+        application.status = new_status
+    elif target_stage.key == "collected":
+        application.status = "collected"
+    elif target_stage.key == "rejected":
+        application.status = "rejected"
+    elif target_stage.key == "on_hold":
+        application.status = "on_hold"
+    else:
+        application.status = "active"
+    if target_stage.key == "on_hold":
+        if application.previous_stage is None:
+            application.previous_stage = old
+    else:
+        application.previous_stage = None
+    application.save()
+    change = StageChange.objects.create(
+        application=application, from_stage=old, to_stage=target_stage,
+        by_user=actor, reason=(reason or "")[:240],
+    )
+    AuditLog.objects.create(
+        user=actor, action="stage_changed", object_type="Application",
+        object_id=str(application.pk),
+        details={"from": getattr(old, "key", None), "to": target_stage.key, "reason": (reason or "")[:160]},
+        ip=ip, reason=(reason or "")[:240],
+    )
+    event = channels.StageChangedEvent(
+        application=application, from_stage=old, to_stage=target_stage,
+        change=change, actor=actor, ip=ip, reason=reason, notify=notify,
+    )
+    channels.default_event_bus.publish(event)
+    return application, change
 
 
 def resend_last_notification(application, actor=None, ip=None):
@@ -159,7 +193,7 @@ def resend_last_notification(application, actor=None, ip=None):
     return send_notification(row, actor=actor, ip=ip)
 
 
-def notify_stage(application, stage, actor=None, ip=None):
+def notify_stage(application, stage, actor=None, ip=None, idempotency_key=None):
     if not stage.notify:
         return None
-    return notify(application, stage.key, actor=actor, ip=ip)
+    return notify(application, stage.key, actor=actor, ip=ip, idempotency_key=idempotency_key)

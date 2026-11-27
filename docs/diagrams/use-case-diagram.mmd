@@ -1,0 +1,17 @@
+%% Use Case Diagram — PassTrack
+%% Footer: EK01-HAZY-VM26 · 25313351001
+graph TD
+  A((Applicant)) --> UC1[Check status Web]
+  A --> UC2[Check status USSD]
+  A --> UC3[Request OTP]
+  O((Officer)) --> UC4[Register application]
+  O --> UC5[Advance stage]
+  O --> UC6[Hold/Resume/Reject]
+  O --> UC7[Correct contact]
+  O --> UC8[Bulk update]
+  S((Supervisor)) --> UC9[Approve/Reject]
+  S --> UC10[View audit log]
+  Ad((Admin)) --> UC11[Manage offices/stages/templates]
+  G((SMS Gateway)) --> UC12[Delivery callback]
+  Footer["EK01-HAZY-VM26 · 25313351001"]
+  UC12 --> Footer

@@ -1,17 +1,16 @@
 from django.conf import settings
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework import serializers, status
-from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import FormParser
 from rest_framework.renderers import BaseRenderer
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes
-from .models import Applicant, Application, AuditLog, Notification, Office, Profile, Stage, StageChange
+from .models import Applicant, Application, AuditLog, Notification, Office, Stage, StageChange
 from .services import notify_stage
+from .services import transition_application_stage
 from .utils import audit, client_ip, mask_phone, normalize_phone, tracking_code_for
 
 
@@ -42,7 +41,10 @@ class ApplicationReadSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Application
-        fields = ["tracking_code", "applicant_name", "phone_masked", "application_type", "stage", "stage_name", "status", "office", "received_at", "updated_at", "notifications"]
+        fields = [
+            "tracking_code", "applicant_name", "phone_masked", "application_type", "stage",
+            "stage_name", "status", "office", "received_at", "updated_at", "notifications",
+        ]
 
     def get_applicant_name(self, obj) -> str:
         return f"{obj.applicant.first_name} {obj.applicant.surname}"
@@ -51,8 +53,13 @@ class ApplicationReadSerializer(serializers.ModelSerializer):
         return mask_phone(obj.applicant.phone)
 
     def get_notifications(self, obj) -> list[dict]:
-        return [{"channel": row.channel, "status": row.status, "created_at": row.created_at, "provider_ref": row.provider_ref} for row in obj.notifications.order_by("-created_at")[:10]]
-
+        return [
+            {
+                "channel": row.channel, "status": row.status,
+                "created_at": row.created_at, "provider_ref": row.provider_ref,
+            }
+            for row in obj.notifications.order_by("-created_at")[:10]
+        ]
 
 
 class StageUpdateSerializer(serializers.Serializer):
@@ -102,9 +109,14 @@ class ApplicationCreateAPIView(APIView):
             return Response({"detail": "Your account is not assigned to an office."}, status=403)
         data = serializer.validated_data
         with transaction.atomic():
-            applicant, created = Applicant.objects.get_or_create(national_id=data["national_id"].strip().upper(), defaults={
-                "first_name": data["first_name"], "surname": data["surname"], "phone": data["phone"], "email": data.get("email", ""), "language": data["language"], "date_of_birth": data.get("date_of_birth"),
-            })
+            applicant, created = Applicant.objects.get_or_create(
+                national_id=data["national_id"].strip().upper(),
+                defaults={
+                    "first_name": data["first_name"], "surname": data["surname"], "phone": data["phone"],
+                    "email": data.get("email", ""), "language": data["language"],
+                    "date_of_birth": data.get("date_of_birth"),
+                },
+            )
             if not created:
                 applicant.first_name = data["first_name"]
                 applicant.surname = data["surname"]
@@ -114,8 +126,14 @@ class ApplicationCreateAPIView(APIView):
                 applicant.date_of_birth = data.get("date_of_birth")
                 applicant.save()
             stage = Stage.objects.get(key="received")
-            app = Application.objects.create(tracking_code=tracking_code_for(office), applicant=applicant, office=office, application_type=data["application_type"], current_stage=stage)
-            StageChange.objects.create(application=app, from_stage=None, to_stage=stage, by_user=request.user, reason="Registered through API")
+            app = Application.objects.create(
+                tracking_code=tracking_code_for(office), applicant=applicant, office=office,
+                application_type=data["application_type"], current_stage=stage,
+            )
+            StageChange.objects.create(
+                application=app, from_stage=None, to_stage=stage, by_user=request.user,
+                reason="Registered through API",
+            )
             notify_stage(app, stage, actor=request.user, ip=client_ip(request._request))
             audit(request._request, "application_registered_api", app, {"stage": stage.key})
         return Response(ApplicationReadSerializer(app).data, status=status.HTTP_201_CREATED)
@@ -146,77 +164,140 @@ class ApplicationStageAPIView(APIView):
     def put(self, request, code):
         app = get_object_or_404(Application.objects.select_related("current_stage", "office"), tracking_code=code)
         profile = getattr(request.user, "profile", None)
-        if not profile or (profile.office_id and profile.office_id != app.office_id) or (not profile.office_id and profile.role != "admin"):
+        if not _api_can_access(profile, app):
             return Response({"detail": "Application is outside your office."}, status=403)
         target = Stage.objects.filter(key=request.data.get("stage")).first()
         if not target:
             return Response({"stage": "Unknown stage."}, status=400)
         reason = str(request.data.get("reason", "")).strip()
-        next_stage = app.next_stage
-        is_next = bool(next_stage and target.pk == next_stage.pk)
-        if target.key == "on_hold" and not reason:
-            return Response({"reason": "A reason is required to put an application on hold."}, status=400)
-        if target.key == "rejected":
-            if profile.role not in ("supervisor", "admin"):
-                return Response({"detail": "A supervisor role is required to reject an application."}, status=403)
-            if not reason:
-                return Response({"reason": "A reason is required."}, status=400)
-        elif target.key == "collected":
-            if app.current_stage.key != "ready" and profile.role not in ("supervisor", "admin"):
-                return Response({"detail": "A passport must be ready before it can be collected."}, status=403)
-        elif target.key != "on_hold" and not is_next:
-            if profile.role not in ("supervisor", "admin"):
-                return Response({"detail": "A supervisor role is required to skip or move back."}, status=403)
-            if not reason:
-                return Response({"reason": "A reason is required."}, status=400)
-        old = app.current_stage
-        app.current_stage = target
-        if target.key == "collected":
-            app.status = "collected"
-        elif target.key == "rejected":
-            app.status = "rejected"
-        elif target.key == "on_hold":
-            app.previous_stage = old
-            app.status = "on_hold"
-        else:
-            app.status = "active"
-            app.previous_stage = None
-        app.save()
-        StageChange.objects.create(application=app, from_stage=old, to_stage=target, by_user=request.user, reason=reason or "Updated through API")
-        notify_stage(app, target, actor=request.user, ip=client_ip(request._request))
-        audit(request._request, "stage_changed_api", app, {"from": old.key, "to": target.key, "reason": reason[:160]})
+        validation_error = _api_validate_transition(app, target, profile, reason)
+        if validation_error is not None:
+            return validation_error
+        old_key = app.current_stage.key
+        transition_application_stage(
+            app, target, actor=request.user, reason=reason or "Updated through API",
+            ip=client_ip(request._request),
+        )
+        audit(request._request, "stage_changed_api", app, {"from": old_key, "to": target.key, "reason": reason[:160]})
         return Response(ApplicationReadSerializer(app).data)
+
+
+def _api_can_access(profile, app):
+    if not profile:
+        return False
+    if profile.office_id and profile.office_id != app.office_id:
+        return False
+    if not profile.office_id and profile.role != "admin":
+        return False
+    return True
+
+
+def _api_validate_transition(app, target, profile, reason):
+    result = _api_validate_hold(target, reason)
+    if result is not None:
+        return result
+    result = _api_validate_rejected(target, profile, reason)
+    if result is not None:
+        return result
+    result = _api_validate_collected(app, target, profile)
+    if result is not None:
+        return result
+    return _api_validate_skip(app, target, profile, reason)
+
+
+def _api_validate_hold(target, reason):
+    if target.key == "on_hold" and not reason:
+        return Response({"reason": "A reason is required to put an application on hold."}, status=400)
+    return None
+
+
+def _api_validate_rejected(target, profile, reason):
+    if target.key != "rejected":
+        return None
+    if profile.role not in ("supervisor", "admin"):
+        return Response({"detail": "A supervisor role is required to reject an application."}, status=403)
+    if not reason:
+        return Response({"reason": "A reason is required."}, status=400)
+    return None
+
+
+def _api_validate_collected(app, target, profile):
+    if target.key != "collected":
+        return None
+    if app.current_stage.key != "ready" and profile.role not in ("supervisor", "admin"):
+        return Response({"detail": "A passport must be ready before it can be collected."}, status=403)
+    return None
+
+
+def _api_validate_skip(app, target, profile, reason):
+    if target.key == "on_hold":
+        return None
+    next_stage = app.next_stage
+    is_next = bool(next_stage and target.pk == next_stage.pk)
+    if is_next:
+        return None
+    if profile.role not in ("supervisor", "admin"):
+        return Response({"detail": "A supervisor role is required to skip or move back."}, status=403)
+    if not reason:
+        return Response({"reason": "A reason is required."}, status=400)
+    return None
 
 
 class SmsDeliveryAPIView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
-    @extend_schema(request=DeliveryCallbackSerializer, responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT, description="Delivery status recorded.")})
+    @extend_schema(
+        request=DeliveryCallbackSerializer,
+        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT, description="Delivery status recorded.")},
+    )
     def post(self, request):
         secret = settings.SMS_CALLBACK_TOKEN
         if secret and request.headers.get("X-Callback-Token") != secret:
             return Response({"detail": "Invalid callback token."}, status=403)
-        provider_ref = str(request.data.get("provider_ref") or request.data.get("messageId") or request.data.get("id") or "")
-        raw_status = str(request.data.get("status") or request.data.get("deliveryStatus") or "").lower()
-        row = None
-        if request.data.get("notification_id") or request.data.get("notificationId"):
-            row = Notification.objects.filter(pk=request.data.get("notification_id") or request.data.get("notificationId")).first()
-        if not row and provider_ref:
-            row = Notification.objects.filter(provider_ref=provider_ref).first()
+        provider_ref = _callback_provider_ref(request)
+        raw_status = _callback_raw_status(request)
+        row = _callback_find_notification(request, provider_ref)
         if not row:
             return Response({"detail": "Notification not found."}, status=404)
-        if any(word in raw_status for word in ("deliver", "success", "sent")):
-            row.status = "delivered"
-            row.error = ""
-        elif any(word in raw_status for word in ("fail", "undeliver", "reject", "error")):
-            row.status = "failed"
-            row.error = str(request.data.get("failureReason") or request.data.get("error") or "Delivery failed")[:500]
-        else:
-            row.status = "queued"
+        _callback_apply_status(row, raw_status, request)
         row.save(update_fields=["status", "error", "updated_at"])
-        AuditLog.objects.create(user=None, action="sms_delivery_callback", object_type="Notification", object_id=str(row.pk), details={"provider_ref": provider_ref, "status": row.status}, ip=client_ip(request._request))
+        AuditLog.objects.create(
+            user=None, action="sms_delivery_callback", object_type="Notification",
+            object_id=str(row.pk), details={"provider_ref": provider_ref, "status": row.status},
+            ip=client_ip(request._request),
+        )
         return Response({"ok": True, "notification_id": row.pk, "status": row.status})
+
+
+def _callback_provider_ref(request):
+    return str(request.data.get("provider_ref") or request.data.get("messageId") or request.data.get("id") or "")
+
+
+def _callback_raw_status(request):
+    return str(request.data.get("status") or request.data.get("deliveryStatus") or "").lower()
+
+
+def _callback_find_notification(request, provider_ref):
+    row = None
+    if request.data.get("notification_id") or request.data.get("notificationId"):
+        row = Notification.objects.filter(
+            pk=request.data.get("notification_id") or request.data.get("notificationId")
+        ).first()
+    if not row and provider_ref:
+        row = Notification.objects.filter(provider_ref=provider_ref).first()
+    return row
+
+
+def _callback_apply_status(row, raw_status, request):
+    if any(word in raw_status for word in ("deliver", "success", "sent")):
+        row.status = "delivered"
+        row.error = ""
+    elif any(word in raw_status for word in ("fail", "undeliver", "reject", "error")):
+        row.status = "failed"
+        row.error = str(request.data.get("failureReason") or request.data.get("error") or "Delivery failed")[:500]
+    else:
+        row.status = "queued"
 
 
 class PlainTextRenderer(BaseRenderer):
@@ -237,7 +318,12 @@ class UssdAPIView(APIView):
 
     @extend_schema(
         request=UssdRequestSerializer,
-        responses={200: OpenApiResponse(response=OpenApiTypes.STR, description="Plain-text CON or END response, at most 160 characters.")},
+        responses={
+            200: OpenApiResponse(
+                response=OpenApiTypes.STR,
+                description="Plain-text CON or END response, at most 160 characters.",
+            )
+        },
     )
     def get(self, request):
         from django.http import HttpResponse

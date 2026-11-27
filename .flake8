@@ -1,0 +1,4 @@
+# Token: EK01-HAZY-VM26 | Student: 25313351001
+[flake8]
+max-line-length = 120
+exclude = .git,__pycache__,*/migrations/*,core/management/commands/seed_demo.py,.venv
