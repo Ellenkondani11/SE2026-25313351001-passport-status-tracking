@@ -25,9 +25,14 @@
 - **Preventive:** hash-chained audit log, idempotency keys, rate limits, WAL/indexes.
 
 ## 3. Live git bisect check
-[TO RUN: git bisect session]
+- **Target defect:** Missing cryptographic hash chain on `AuditLog` (present at `v0.7-asbuilt`).
+- **Command:** `git bisect start --term-old=defect-present --term-new=defect-fixed HEAD v0.7-asbuilt` + `git bisect run ...`
+- **Recorded session:**
+```text
 
-Footer: Token `EK01-HAZY-VM26` | Student `25313351001`=== git log --oneline ===
+```
+
+Footer: Token `EK01-HAZY-VM26` | Student `25313351001`
 d2ff5fc (HEAD -> develop) fix(ci): clear complexity/flake8 gates, add WAL/indexes, and complete engineering docs
 2d67569 (origin/develop) fix(ci): clear complexity/flake8 gates, add WAL/indexes, and complete engineering docs
 0c2f661 docs(design): add CI workflow, ADRs, FTR, reengineering report, and 500-user load test
