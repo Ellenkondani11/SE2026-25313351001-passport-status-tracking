@@ -25,11 +25,14 @@
 - **Preventive:** hash-chained audit log, idempotency keys, rate limits, WAL/indexes.
 
 ## 3. Live git bisect check
-- **Target defect:** Missing cryptographic hash chain on `AuditLog` (present at `v0.7-asbuilt`).
-- **Command:** `git bisect start --term-old=defect-present --term-new=defect-fixed HEAD v0.7-asbuilt` + `git bisect run ...`
+- **Target defect:** Missing SHA-256 hash chain on AuditLog (present at v0.7-asbuilt).
 - **Recorded session:**
 ```text
-
+# defect-fixed: [9fbb07d5e3d49783ee2017834f3b14b36784ba97] chore(git): stop tracking local sqlite db, coverage, and pycache files
+# defect-present: [e2e27bdeff4b6675e3edb4a1bfdb358ccac65a67] Expand README with comprehensive project context
+git bisect start '--term-old=defect-present' '--term-new=defect-fixed' 'HEAD' 'v0.7-asbuilt'
+# defect-present: [a03cd979807879f651664868da18cc5ea87017cd] docs(design): add CI workflow, ADRs, FTR, reengineering report, and 500-user load test
+git bisect defect-present a03cd979807879f651664868da18cc5ea87017cd
 ```
 
 Footer: Token `EK01-HAZY-VM26` | Student `25313351001`
