@@ -25,9 +25,35 @@
 - **Preventive:** hash-chained audit log, idempotency keys, rate limits, WAL/indexes.
 
 ## 3. Live git bisect check
-[TO RUN: git bisect session]
+- **Target defect:** Missing SHA-256 hash chain on AuditLog (present at v0.7-asbuilt).
+- **Bisect log:**
+```text
+# defect-fixed: [1211a7397c326f7a96e37142784bfbfe375c1a2c] docs(maintenance): record actual git bisect log for audit-chain fix
+# defect-present: [e2e27bdeff4b6675e3edb4a1bfdb358ccac65a67] Expand README with comprehensive project context
+git bisect start '--term-old=defect-present' '--term-new=defect-fixed' 'HEAD' 'v0.7-asbuilt'
+# defect-present: [a03cd979807879f651664868da18cc5ea87017cd] docs(design): add CI workflow, ADRs, FTR, reengineering report, and 500-user load test
+git bisect defect-present a03cd979807879f651664868da18cc5ea87017cd
+# defect-present: [d2ff5fc93fb1215f6d0394800a118840df46f390] fix(ci): clear complexity/flake8 gates, add WAL/indexes, and complete engineering docs
+git bisect defect-present d2ff5fc93fb1215f6d0394800a118840df46f390
+# defect-present: [7ac9d481affc4ff4f6708d8c7158cb581bf02742] docs(maintenance): record verified git bisect session for audit-chain fix
+git bisect defect-present 7ac9d481affc4ff4f6708d8c7158cb581bf02742
+# defect-present: [9fbb07d5e3d49783ee2017834f3b14b36784ba97] chore(git): stop tracking local sqlite db, coverage, and pycache files
+git bisect defect-present 9fbb07d5e3d49783ee2017834f3b14b36784ba97
+# first defect-fixed commit: [1211a7397c326f7a96e37142784bfbfe375c1a2c] docs(maintenance): record actual git bisect log for audit-chain fix
+```
+- **Bisect result:**
+```text
+Author: Ellen Kondani <kondaniellen@gmail.com>
+Date:   Fri Nov 27 18:51:09 2026 +0200
 
-Footer: Token `EK01-HAZY-VM26` | Student `25313351001`=== git log --oneline ===
+    docs(maintenance): record actual git bisect log for audit-chain fix
+
+ docs/05-maintenance/debug-log-and-maintenance.md | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+bisect found first bad commit
+```
+
+Footer: Token `EK01-HAZY-VM26` | Student `25313351001`
 d2ff5fc (HEAD -> develop) fix(ci): clear complexity/flake8 gates, add WAL/indexes, and complete engineering docs
 2d67569 (origin/develop) fix(ci): clear complexity/flake8 gates, add WAL/indexes, and complete engineering docs
 0c2f661 docs(design): add CI workflow, ADRs, FTR, reengineering report, and 500-user load test
